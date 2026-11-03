@@ -1,0 +1,9 @@
+[package]
+name = "cdimage"
+description = "Read ISO9660 file systems from raw (2352-byte) or cooked (2048-byte) CD images"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true

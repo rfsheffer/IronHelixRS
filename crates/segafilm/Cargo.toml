@@ -1,0 +1,9 @@
+[package]
+name = "segafilm"
+description = "Sega FILM container and the Sega CD 'Cinepak for Sega' video codec"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true

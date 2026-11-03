@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use helix_tools::output::{self, AnimFrame, Pixels, collect_files, mirrored};
 use paco::decoder::{DecoderOptions, RowOrder};
 use paco::{Decoder, Frame, Movie, Op, Palette};
 
@@ -106,9 +107,7 @@ fn main() -> Result<()> {
 fn digest(dir: &Path, opts: DecoderOptions) -> Result<()> {
     use std::hash::{DefaultHasher, Hash, Hasher};
 
-    let mut files = Vec::new();
-    collect_files(dir, &mut files)?;
-    files.sort();
+    let files = collect_files(dir)?;
     println!("path\twidth\theight\tframes\tpixels_hash\tunique_frames_hash\thas_audio");
     for file in &files {
         let Ok(movie) = Movie::parse(&fs::read(file)?) else {
@@ -229,22 +228,13 @@ fn frames(file: &Path, out: &Path, opts: DecoderOptions) -> Result<()> {
     let frames = decode(file, opts)?;
     for f in &frames {
         let path = out.join(format!("frame_{:04}.png", f.index));
-        write_png(&path, f)?;
+        let palette = f.palette.to_rgb_bytes();
+        output::write_png(&path, f.width, f.height, &Pixels::Indexed { data: &f.pixels, palette: &palette })?;
         if let Some(e) = &f.error {
             eprintln!("frame {}: {e}", f.index);
         }
     }
     println!("wrote {} frames to {}", frames.len(), out.display());
-    Ok(())
-}
-
-fn write_png(path: &Path, f: &Frame) -> Result<()> {
-    let file = BufWriter::new(fs::File::create(path)?);
-    let mut enc = png::Encoder::new(file, f.width as u32, f.height as u32);
-    enc.set_color(png::ColorType::Indexed);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.set_palette(f.palette.to_rgb_bytes());
-    enc.write_header()?.write_image_data(&f.pixels)?;
     Ok(())
 }
 
@@ -277,74 +267,23 @@ fn gif(file: &Path, out: &Path, opts: DecoderOptions) -> Result<()> {
     Ok(())
 }
 
-/// Write frames as an animated PNG. If every frame shares one palette the
-/// file stays 8-bit indexed (pixel-exact and small); otherwise it is RGB.
+/// Write frames as an animated PNG (indexed when they share one palette).
 fn write_apng(path: &Path, frames: &[Frame]) -> Result<()> {
     let first = frames.first().context("movie has no frames")?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let one_palette = frames.iter().all(|f| f.palette == first.palette);
-
-    let file = BufWriter::new(fs::File::create(path)?);
-    let mut enc = png::Encoder::new(file, first.width as u32, first.height as u32);
-    enc.set_depth(png::BitDepth::Eight);
-    if one_palette {
-        enc.set_color(png::ColorType::Indexed);
-        enc.set_palette(first.palette.to_rgb_bytes());
-    } else {
-        enc.set_color(png::ColorType::Rgb);
-    }
-    enc.set_animated(frames.len() as u32, 1)?; // play once
-    let mut writer = enc.write_header()?;
-
-    for f in frames {
-        // Delays are stored as a fraction of a second.
-        writer.set_frame_delay(f.duration_ms.round() as u16, 1000)?;
-        if one_palette {
-            writer.write_image_data(&f.pixels)?;
-        } else {
-            let rgb: Vec<u8> = f
-                .pixels
-                .iter()
-                .flat_map(|&i| {
-                    let c = f.palette.0[i as usize];
-                    [c.r, c.g, c.b]
-                })
-                .collect();
-            writer.write_image_data(&rgb)?;
-        }
-    }
-    writer.finish()?;
-    Ok(())
-}
-
-/// Write 8-bit mono PCM as a WAV file.
-fn write_wav(path: &Path, audio: &paco::Audio) -> Result<()> {
-    let len = audio.samples.len() as u32;
-    let mut out = Vec::with_capacity(44 + audio.samples.len());
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
-    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    out.extend_from_slice(&1u16.to_le_bytes()); // mono
-    out.extend_from_slice(&audio.sample_rate.to_le_bytes());
-    out.extend_from_slice(&audio.sample_rate.to_le_bytes()); // bytes per second
-    out.extend_from_slice(&1u16.to_le_bytes()); // block align
-    out.extend_from_slice(&8u16.to_le_bytes()); // bits per sample
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&len.to_le_bytes());
-    out.extend_from_slice(&audio.samples);
-    fs::write(path, out)?;
-    Ok(())
+    let palettes: Vec<Vec<u8>> = frames.iter().map(|f| f.palette.to_rgb_bytes()).collect();
+    let anim: Vec<AnimFrame> = frames
+        .iter()
+        .zip(&palettes)
+        .map(|(f, palette)| AnimFrame {
+            pixels: Pixels::Indexed { data: &f.pixels, palette },
+            duration_ms: f.duration_ms,
+        })
+        .collect();
+    output::write_apng(path, first.width, first.height, &anim)
 }
 
 fn export(dir: &Path, out: &Path, opts: DecoderOptions) -> Result<()> {
-    let mut files = Vec::new();
-    collect_files(dir, &mut files)?;
-    files.sort();
-
+    let files = collect_files(dir)?;
     let (mut written, mut skipped) = (0, 0);
     for file in &files {
         let data = fs::read(file)?;
@@ -357,15 +296,9 @@ fn export(dir: &Path, out: &Path, opts: DecoderOptions) -> Result<()> {
             skipped += 1;
             continue;
         }
-        let rel = file.strip_prefix(dir)?;
-        let base = out.join(rel).into_os_string();
-        let mut apng = base.clone();
-        apng.push(".apng");
-        write_apng(Path::new(&apng), &frames)?;
+        write_apng(&mirrored(out, dir, file, ".apng")?, &frames)?;
         if let Some(audio) = movie.audio() {
-            let mut wav = base;
-            wav.push(".wav");
-            write_wav(Path::new(&wav), &audio)?;
+            output::write_wav_u8(&mirrored(out, dir, file, ".wav")?, audio.sample_rate, &audio.samples)?;
         }
         written += 1;
     }
@@ -374,9 +307,7 @@ fn export(dir: &Path, out: &Path, opts: DecoderOptions) -> Result<()> {
 }
 
 fn check(dir: &Path, opts: DecoderOptions) -> Result<()> {
-    let mut files = Vec::new();
-    collect_files(dir, &mut files)?;
-    files.sort();
+    let files = collect_files(dir)?;
 
     let (mut ok, mut bad, mut not_paco) = (0, 0, 0);
     // Frames that wrote more than one full phantom line below their area;
@@ -419,14 +350,3 @@ fn check(dir: &Path, opts: DecoderOptions) -> Result<()> {
     Ok(())
 }
 
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_files(&path, out)?;
-        } else {
-            out.push(path);
-        }
-    }
-    Ok(())
-}

@@ -13,9 +13,19 @@ path = "src/bin/paco.rs"
 name = "macx"
 path = "src/bin/macx.rs"
 
+[[bin]]
+name = "isox"
+path = "src/bin/isox.rs"
+
+[[bin]]
+name = "sfilm"
+path = "src/bin/sfilm.rs"
+
 [dependencies]
 paco.workspace = true
 macformats.workspace = true
+cdimage.workspace = true
+segafilm.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 png.workspace = true

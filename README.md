@@ -12,7 +12,9 @@ and Sega CD releases (including the Sega CD's extra ending video).
 ```
 crates/paco          library: PACo (CAVF) movie parser, RLE decoder, frame compositor
 crates/macformats    library: StuffIt 5 (+Arsenic), resource forks, DiskCopy NDIF (+ADC), HFS
-crates/helix-tools   command line tools (`paco`, `macx`)
+crates/cdimage       library: ISO9660 on raw (2352-byte) or cooked (2048-byte) CD images
+crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Sega CD PCM audio
+crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`)
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
 ```
@@ -47,6 +49,18 @@ target/release/macx hfs-extract out/mac/helix.hfs -o out/mac/files
 
 Resource forks are written next to each file as `<name>.rsrc`; type/creator codes go to
 `_finder.tsv`. `macx hfs-ls` lists a volume without extracting.
+
+## The Sega CD version: `isox` and `sfilm`
+
+```
+target/release/isox extract "../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).img" -o out/sega/files
+target/release/sfilm info   out/sega/files/SEGUES/ENDING.SEG
+target/release/sfilm apng   out/sega/files/SEGUES/ENDING.SEG -o out/sega/ENDING.apng   (+ ENDING.wav)
+target/release/sfilm export out/sega/files -o out/sega/export
+target/release/sfilm check  out/sega/files
+```
+
+`sfilm frames <movie> -o <dir>` writes one PNG per frame.
 
 ## Format findings
 
@@ -84,5 +98,46 @@ All 3,353 PACo movies in the Windows release decode with zero errors.
   of small 144×32 navigation strips. The game application itself is inside the installers' data
   forks, which are classic StuffIt 1.5 (`SIT!`) archives, not yet supported.
 - **Sega CD:** `.img` is Mode 1 / 2352-byte-sector ISO9660 (volume `MEGA_CD`) plus a CD audio
-  track. Same folder layout as the PC (`NAV`, `SEGUES`, `VIDEO`, ...), but videos are `.SEG`
-  files in Sega FILM containers (`FILM`/`FDSC`/`STAB` chunks) with a `sega` codec, not PACo.
+  track. Same folder layout as the PC (`NAV`, `SEGUES`, `VIDEO`, ...), but the videos are Sega
+  FILM files using the "Cinepak for Sega" codec (see below). Sega-only content:
+  `SEGUES/ENDING` (a 97.8-second extended ending with live-action footage), `VIDEO/CPTSPEE`, and
+  a reworked opening (`OPENING/BARLOGO`, `FIREHELX`, `HELIXTUN`, `OPENING`, `SML_OPEN`).
+
+## Sega CD video: "Cinepak for Sega"
+
+Despite the name it has little to do with desktop Cinepak. It is a vector quantizer built around
+the Genesis video hardware: 8×8 tiles of 4-bit pixels, each tile drawn with one of up to four
+16-color palettes. Each frame (`SM` header) holds the palettes, a 2-bit palette number per tile,
+two codebooks (4×2-pixel and 2×2-pixel blocks), a 2-bit coding method per tile, then per-tile
+data: a raw tile, 8 indices into the 4×2 codebook, 16 indices into the 2×2 codebook, or nothing
+(reuse the tile from two frames back). Sound is 8-bit sign-magnitude PCM played at 16,276 Hz.
+See `crates/segafilm/src/cinepak_sega.rs` for the full layout.
+
+What we found in the Iron Helix files on top of that:
+
+- Every frame is a keyframe; the "reuse from two frames back" method is never used.
+- 2,333 of 2,334 movies use this codec. The exception, `COMPUTER/ACCDEN.CMP`, uses a different
+  `rle ` codec that isn't supported yet.
+- A few movies have damaged sample tables (entries all claiming the same length while the real
+  frames are shorter and packed back to back, sometimes with padding or a corrupt frame between
+  them). The decoder finds the real frame headers, so all of them still decode.
+
+## Credits
+
+The Sega CD video codec was not worked out here. Its format comes from **bgvanbur's
+[scdtools](https://github.com/classiccoding/scdtools)** (2011, GPL), whose `scdmoviedecode` and
+`scdcinepakencode` scripts decode and encode "Cinepak for Sega", as described in the Sonic Retro
+thread [Demystifying Cinepak For Sega](https://forums.sonicretro.org/threads/demystifying-cinepak-for-sega.26243/).
+Our first attempt got the tile methods and codebooks right, but we could not work out the
+per-tile palettes until we read that work. `crates/segafilm` is an independent Rust
+implementation of the format as scdtools describes it; no scdtools code is used.
+
+Also used:
+
+- [MultimediaWiki: Sega FILM](https://wiki.multimedia.cx/index.php/Sega_FILM) (based on Mike
+  Melanson's FILM/CPK format document): container layout, keyframe flag, Sega CD sign-magnitude
+  audio.
+- [TrekkiesUnite118/SegaSaturnFilmMuxer](https://github.com/TrekkiesUnite118/SegaSaturnFilmMuxer):
+  cross-check of the FILM header and sample table.
+- [rfsheffer/PACoPlayer](https://github.com/rfsheffer/PACoPlayer): CoSA's `CAVF.h` and RLE notes,
+  the starting point for the PACo decoder.
