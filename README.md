@@ -28,9 +28,13 @@ out/                 generated output (gitignored)
 You can explore the whole ship: the original interface (laid out from the Director score), the
 navigation buttons, movement movies and sounds, location strips, doors, ladders, elevators and
 the map in all three modes. Scanning works (auto and manual, enhance and acquire), along with the
-DNA kit and probe controls, door clearance, the energy bar and the first phase change, whose
-movie plays on the bridge screen. The defender, the arm and the computers come next (see
-[docs/design.md](docs/design.md)).
+DNA kit and probe controls, door clearance, the energy bar and the phase changes, whose movies
+play on the bridge screen. The probe arm docks at computer ports, and the computers run from the
+game's own table: menus, the keypad with this game's generated codes, the Mission and Crew
+screens, video messages (clues), and the actions, including the ones aimed at the defender
+(bulkheads, turning it off, incinerating or ejecting it), with their segues. The defender itself
+comes next; until then it stays at its start, so the location-based actions report the wrong
+location (see [docs/design.md](docs/design.md)).
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
@@ -49,20 +53,24 @@ until phases are played, **P** cycles the phase for testing. The PC shipped Germ
 strips for the stasis room in its English folder; the game rebuilds English ones from two
 English strips as they load.
 
-Controls: click or tap the arrows, the function buttons (Scan, CTRL), the control screen's
+Controls: click or tap the arrows, the function buttons (Scan, Arm, CTRL), the control screen's
 panels and the map mode switch; with the scanner on, click (auto scan) or drag (manual scan) in
-the view. Keys: arrows move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door,
-1-6 elevator floor; and, not in the original, S scan, C probe controls, M map mode. F
-pixel-perfect scaling, H debug overlay, Esc quit. The skill level (default 1) picks the scan
-table until the title screen exists.
+the view; with the arm out, press and drag in the view to move it onto a port. Keys: arrows move
+and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor (facing
+the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not in the original,
+S scan, X arm, C probe controls, M map mode, Enter on the keypad. F pixel-perfect scaling, H
+debug overlay, Esc quit. The skill level (default 1) picks the scan table and video clues until
+the title screen exists. Computer codes show in a small built-in font; the original draws them
+with Mac text.
 
 Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay "SK(400,60)A"` plays a
 sequence of steps (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
-P phase, S scan, C controls, K click the scan point, A acquire, G grant DNA 01/02/10 and skip
-to phase 2 like the original's debug keys, `(x,y)` a click at stage coordinates);
+P phase, S scan, X arm, C controls, K click the scan point (or, with the arm out, the port), A
+acquire, G grant DNA 01/02/10 and skip to phase 2 like the original's debug keys, digits on the
+keypad, `(x,y)` a click at stage coordinates);
 `--screenshot <png>` saves the screen (after the autoplay, or after a few seconds; or at
 `--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--debug` starts with the
-overlay on (skill, energy, DNA kit, phase).
+overlay on (skill, energy, DNA kit, phase, this game's codes and video clues, defender tasks).
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
 screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain
@@ -147,7 +155,9 @@ behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD. `helixdb walk 
 <Iron Helix™ Files>` goes further: it explores every state reachable through the actual rules
 (helix-core) and checks every movie and clip they request, in every game phase: all 110
 nodes, 1,276 movies, none missing. With `--pc <HELIX>` it adds the PC's hidden rooms and looks
-up movies on both CDs: all 114 nodes, 1,329 movies, none missing.
+up movies on both CDs: all 114 nodes, 1,329 movies, none missing. It also checks the movies
+behind every scan point (122) and everything the computers can play: menu clips, keypad
+actions, fixed messages, video clues and segues (87), none missing.
 
 The **score** (`VWSC`) gives the screen layout: a u32 size, then frames of (u8 length, u8
 offset) word patches to a 512-byte buffer that carries over between frames: 32 bytes of main

@@ -32,7 +32,7 @@ use sprites::Canvas;
 const PANEL_COLOR: Color = Color::new(0.10, 0.10, 0.11, 1.0);
 
 /// Keys passed on to the game screen.
-const GAME_KEYS: [KeyCode; 22] = [
+const GAME_KEYS: [KeyCode; 27] = [
     KeyCode::Up,
     KeyCode::Down,
     KeyCode::Left,
@@ -55,6 +55,11 @@ const GAME_KEYS: [KeyCode; 22] = [
     KeyCode::S,
     KeyCode::C,
     KeyCode::G,
+    KeyCode::X,
+    KeyCode::Key0,
+    KeyCode::Key8,
+    KeyCode::Key9,
+    KeyCode::Backspace,
 ];
 
 fn window_conf() -> Conf {
@@ -138,8 +143,8 @@ enum Step {
 
 /// `FFLRO2(380,60)A`: letters are keys (F/B forward/back, L/R turn, U/D
 /// ladder, O door, 1-6 elevator, M map mode, P phase, S scan, C controls,
-/// K click the scan point, A acquire, G grant DNA and skip to phase 2);
-/// `(x,y)` is a click.
+/// X arm, K click the scan point (or the port with the arm out), A acquire,
+/// G grant DNA and skip to phase 2, digits on the keypad); `(x,y)` is a click.
 fn parse_autoplay(s: &str) -> std::collections::VecDeque<Step> {
     let mut steps = std::collections::VecDeque::new();
     let mut chars = s.chars();
@@ -168,6 +173,11 @@ fn parse_autoplay(s: &str) -> std::collections::VecDeque<Step> {
             'K' => KeyCode::K,
             'A' => KeyCode::A,
             'G' => KeyCode::G,
+            'X' => KeyCode::X,
+            '0' => KeyCode::Key0,
+            '7' => KeyCode::Key7,
+            '8' => KeyCode::Key8,
+            '9' => KeyCode::Key9,
             '1' => KeyCode::Key1,
             '2' => KeyCode::Key2,
             '3' => KeyCode::Key3,
@@ -304,10 +314,18 @@ async fn main() {
                     if g.auto_scan() { "on" } else { "off" }
                 ),
                 format!("node {} (line {}) facing {} {}  phase {}", nav.node().id, nav.line(), game.facing(), if nav.in_ladder() { "in ladder" } else { "" }, nav.phase()),
+                format!(
+                    "codes {} {:?}  clues {:?} seen {:?}  defender tasks {:?}",
+                    g.codes().0,
+                    g.codes().1,
+                    g.clues().0,
+                    g.clues().1,
+                    g.defender_tasks()
+                ),
                 format!("PC rooms: {}", if assets.pc_rooms.is_empty() { "none (no PC files)".to_owned() } else { assets.pc_rooms.join(", ") }),
                 format!("last movie {}", game.status),
                 format!("stage {}x{} at {:.2}x{}", assets.stage_w, assets.stage_h, layout.scale, if pixel_perfect { " (pixel perfect)" } else { "" }),
-                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  S scan  C controls  M map  P phase  G phase 2  F pixel-perfect  H hide  Esc quit".to_owned(),
+                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  S scan  X arm  C controls  M map  P phase  G phase 2  F pixel-perfect  H hide  Esc quit".to_owned(),
             ];
             for (i, line) in lines.iter().enumerate() {
                 draw_text(line, 8.0, 18.0 + i as f32 * 18.0, 18.0, YELLOW);

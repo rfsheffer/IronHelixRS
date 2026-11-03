@@ -1,10 +1,15 @@
 //! One game in progress: navigation plus the probe's energy, scanner, DNA
-//! kit and probe controls, and the phase (design doc §5, §6, §10.1, §13).
+//! kit, probe controls, arm and computers, and the phase (design doc §5-8,
+//! §10.1, §13).
+
+use std::sync::Arc;
 
 use helixdb::NavGraph;
 use helixdb::nav::ScanPoint;
 
 use crate::access::KIT_SIZE;
+use crate::arm::{Arm, ArmEvent};
+use crate::computer::{Computer, ComputerButton, ComputerData};
 use crate::nav::{NavAction, Navigator, Panel};
 use crate::rng::Rng;
 use crate::scan::{Scan, ScanEvent, ScanView};
@@ -19,6 +24,10 @@ const AUTO_SCAN_COST: i32 = 2;
 const BAR_FRAMES: u8 = 5;
 /// The scan indicators' x positions, by direction relative to the facing.
 const BAR_X: [i32; 4] = [399, 418, 436, 455];
+/// Game length in minutes (§12.3).
+pub const GAME_MINUTES: f32 = 90.0;
+/// The defender's start (line 5); it stays there until its rules arrive.
+const DEFENDER_START: usize = 5;
 
 /// What the control screen shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +37,8 @@ pub enum Interface {
     /// After enhancing: Acquire sample / Exit scanner.
     Scan,
     Controls(ControlsPage),
+    /// Docked at a computer port (see [`Game::computer_view`]).
+    Computer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +52,7 @@ pub enum ControlsPage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Function {
     Scan,
+    Arm,
     Controls,
 }
 
@@ -66,6 +78,10 @@ pub enum Action {
     Scan,
     /// The probe controls (CTRL) function button.
     Controls,
+    /// The Arm function button.
+    Arm,
+    /// A button on the computer screen.
+    Computer(ComputerButton),
     /// Mouse down, drag and up in the view window.
     ViewPress(i32, i32),
     ViewDrag(i32, i32),
@@ -73,16 +89,42 @@ pub enum Action {
     Press(Button),
 }
 
+/// What the computers know of the defender, until its own rules arrive.
+#[derive(Debug, Clone)]
+pub(crate) struct Defender {
+    pub(crate) line: usize,
+    pub(crate) off: bool,
+    pub(crate) trapped: bool,
+    pub(crate) door_sensors: bool,
+    /// Tasks queued for it by computer actions (section 8.5).
+    pub(crate) tasks: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct Game {
-    nav: Navigator,
+    pub(crate) nav: Navigator,
     energy: i32,
-    skill: u8,
+    pub(crate) skill: u8,
     auto_scan: bool,
     scan: Option<Scan>,
     controls: Option<ControlsPage>,
     bars: [Option<u8>; 4],
-    rng: Rng,
+    pub(crate) rng: Rng,
+    arm: Option<Arm>,
+    pub(crate) computer: Option<Computer>,
+    pub(crate) data: Arc<ComputerData>,
+    /// This game's video clues ("node-facing-NN+").
+    pub(crate) clues: Vec<String>,
+    /// Clues whose video has been seen ("NN+").
+    pub(crate) clues_seen: Vec<String>,
+    /// The player's notes, newest first.
+    pub(crate) notes: Vec<String>,
+    pub(crate) auth_code: String,
+    pub(crate) mission_codes: Vec<String>,
+    pub(crate) defender: Defender,
+    /// Seconds played.
+    pub(crate) elapsed: f32,
+    pub(crate) won: bool,
 }
 
 impl Game {
@@ -98,9 +140,56 @@ impl Game {
             controls: None,
             bars: [None; 4],
             rng: Rng::new(seed),
+            arm: None,
+            computer: None,
+            data: Arc::default(),
+            clues: Vec::new(),
+            clues_seen: Vec::new(),
+            notes: Vec::new(),
+            auth_code: String::new(),
+            mission_codes: Vec::new(),
+            defender: Defender { line: DEFENDER_START, off: false, trapped: false, door_sensors: true, tasks: Vec::new() },
+            elapsed: 0.0,
+            won: false,
         };
         game.show_bars();
         game
+    }
+
+    /// Add the computers: picks this game's video clues and codes.
+    pub fn with_computers(mut self, data: ComputerData) -> Self {
+        self.data = Arc::new(data);
+        self.set_up_computers();
+        self
+    }
+
+    /// The authorization code and the three mission codes.
+    pub fn codes(&self) -> (&str, &[String]) {
+        (&self.auth_code, &self.mission_codes)
+    }
+
+    /// The player's notes, newest first (video clue notes).
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    /// This game's video clues and those seen.
+    pub fn clues(&self) -> (&[String], &[String]) {
+        (&self.clues, &self.clues_seen)
+    }
+
+    pub fn won(&self) -> bool {
+        self.won
+    }
+
+    /// The arm's cast and position, while it's out or moving.
+    pub fn arm_view(&self) -> Option<(u16, (i32, i32))> {
+        self.arm.as_ref().map(Arm::view)
+    }
+
+    /// Tasks queued for the defender (section 8.5).
+    pub fn defender_tasks(&self) -> &[String] {
+        &self.defender.tasks
     }
 
     pub fn nav(&self) -> &Navigator {
@@ -132,6 +221,9 @@ impl Game {
     }
 
     pub fn interface(&self) -> Interface {
+        if self.computer.is_some() {
+            return Interface::Computer;
+        }
         match (&self.scan, self.controls) {
             (_, Some(page)) => Interface::Controls(page),
             (Some(Scan::Enhanced(_)), _) => Interface::Scan,
@@ -142,6 +234,8 @@ impl Game {
     pub fn function(&self) -> Option<Function> {
         if self.scan.is_some() {
             Some(Function::Scan)
+        } else if self.arm.as_ref().is_some_and(Arm::out) {
+            Some(Function::Arm)
         } else {
             self.controls.map(|_| Function::Controls)
         }
@@ -150,7 +244,7 @@ impl Game {
     /// The manual scan box is moving or locking on (for tools and tests
     /// that wait for it).
     pub fn scan_busy(&self) -> bool {
-        self.scan.as_ref().is_some_and(Scan::busy)
+        self.scan.as_ref().is_some_and(Scan::busy) || self.arm.as_ref().is_some_and(Arm::busy)
     }
 
     pub fn scan_view(&self) -> ScanView {
@@ -162,7 +256,7 @@ impl Game {
     pub fn scan_bars(&self) -> [Option<(u8, i32)>; 4] {
         let facing = self.nav.facing().index();
         std::array::from_fn(|d| {
-            let frame = self.bars[d].filter(|_| self.controls.is_none())?;
+            let frame = self.bars[d].filter(|_| self.controls.is_none() && self.computer.is_none())?;
             Some((frame, BAR_X[(4 + d - facing) % 4]))
         })
     }
@@ -210,7 +304,16 @@ impl Game {
             Action::Scan => self.open_scan(),
             Action::Controls if self.controls.is_some() => self.close_controls(),
             Action::Controls => self.open_controls(),
+            Action::Arm if self.arm.as_ref().is_some_and(Arm::out) => self.close_arm(),
+            Action::Arm => self.open_arm(),
+            Action::Computer(b) => self.computer_press(b),
             Action::ViewPress(x, y) => {
+                if let Some(arm) = self.arm.as_mut().filter(|a| a.out()) {
+                    // Pressing again moves the arm, and leaves the computer.
+                    arm.press(x, y);
+                    let had_computer = self.computer.take().is_some();
+                    return if had_computer { vec![Effect::ErasePanel, self.nav.info_clip()] } else { Vec::new() };
+                }
                 let event = self.scan.as_mut().and_then(|s| s.press(x, y));
                 self.scan_events(event.into_iter().collect())
             }
@@ -218,11 +321,17 @@ impl Game {
                 if let Some(s) = &mut self.scan {
                     s.drag(x, y);
                 }
+                if let Some(a) = &mut self.arm {
+                    a.drag(x, y);
+                }
                 Vec::new()
             }
             Action::ViewRelease => {
                 if let Some(s) = &mut self.scan {
                     s.release();
+                }
+                if let Some(a) = &mut self.arm {
+                    a.release();
                 }
                 Vec::new()
             }
@@ -237,19 +346,65 @@ impl Game {
             let drift = self.rng.random(3) as i32 - 2;
             *bar = (*bar as i32 + drift).clamp(0, BAR_FRAMES as i32 - 1) as u8;
         }
+        self.elapsed += crate::scan::TICK;
         let events = match &mut self.scan {
             Some(s) => s.tick(&mut self.rng),
             None => Vec::new(),
         };
-        self.scan_events(events)
+        let mut fx = self.scan_events(events);
+        let arm_events = self.arm.as_mut().map(Arm::tick).unwrap_or_default();
+        for e in arm_events {
+            match e {
+                ArmEvent::Motion => fx.push(Effect::Sound("Arm Motion".into())),
+                ArmEvent::Stop => fx.push(Effect::Sound("Arm Stop".into())),
+                ArmEvent::HotSpot => fx.push(Effect::Sound("Arm HotSpot".into())),
+                ArmEvent::Retracted => self.arm = None,
+                // Docked at the port: clearance 02 opens the computer.
+                ArmEvent::Docked if self.nav.access().grants("02") => fx.extend(self.open_computer()),
+                ArmEvent::Docked => fx.extend(self.reject_computer()),
+            }
+        }
+        fx
+    }
+
+    /// Lingo's InstallArm.
+    fn open_arm(&mut self) -> Vec<Effect> {
+        let here = format!("{}.{}", self.nav.node().id, self.nav.facing().index());
+        if self.nav.in_ladder() || self.data.no_arm.contains(&here) {
+            return vec![
+                Effect::Sound("SysBeeb".into()),
+                Effect::InfoClip { folder: "Misc Files".into(), name: "UnableDeploy".into() },
+            ];
+        }
+        let mut fx = Vec::new();
+        if self.scan.is_some() {
+            fx.extend(self.close_scan());
+        } else if self.controls.is_some() {
+            fx.extend(self.close_controls());
+        }
+        let port = self.nav.node().ports[self.nav.facing().index()].map(|(h, v)| (h as i32, v as i32));
+        self.arm = Some(Arm::deploy(port));
+        fx
+    }
+
+    /// Lingo's DeInstallArm (and leaving the computer).
+    pub(crate) fn close_arm(&mut self) -> Vec<Effect> {
+        let had_computer = self.computer.take().is_some();
+        if let Some(a) = &mut self.arm {
+            a.retract();
+        }
+        self.show_bars();
+        if had_computer { vec![Effect::ErasePanel, self.nav.info_clip()] } else { Vec::new() }
     }
 
     fn navigate(&mut self, action: NavAction) -> Vec<Effect> {
         let fx = self.nav.act(action);
-        // Any movement movie closes the scanner and probe controls.
+        // Any movement movie closes the scanner, probe controls, arm and computer.
         if fx.iter().any(|e| matches!(e, Effect::Video { .. })) {
             self.scan = None;
             self.controls = None;
+            self.arm = None;
+            self.computer = None;
             self.show_bars();
         }
         fx
@@ -274,6 +429,10 @@ impl Game {
     /// Lingo's InstallScan.
     fn open_scan(&mut self) -> Vec<Effect> {
         let mut fx = if self.controls.is_some() { self.close_controls() } else { Vec::new() };
+        if self.arm.is_some() {
+            fx.extend(self.close_arm());
+            self.arm = None;
+        }
         let point = self.scan_point(self.nav.facing());
         if !self.auto_scan {
             self.scan = Some(Scan::manual(point));
@@ -306,7 +465,11 @@ impl Game {
     }
 
     fn open_controls(&mut self) -> Vec<Effect> {
-        let fx = if self.scan.is_some() { self.close_scan() } else { Vec::new() };
+        let mut fx = if self.scan.is_some() { self.close_scan() } else { Vec::new() };
+        if self.arm.is_some() {
+            fx.extend(self.close_arm());
+            self.arm = None;
+        }
         self.controls = Some(ControlsPage::Menu);
         fx
     }
@@ -416,11 +579,13 @@ impl Game {
 
     /// Lingo's AdvLevel: the phase movie on the bridge, then back to the
     /// game with full energy.
-    fn advance_phase(&mut self, phase: u8) -> Vec<Effect> {
+    pub(crate) fn advance_phase(&mut self, phase: u8) -> Vec<Effect> {
         self.nav.set_phase(phase);
         self.energy = ENERGY_FULL;
         self.scan = None;
         self.controls = None;
+        self.arm = None;
+        self.computer = None;
         self.show_bars();
         vec![
             Effect::Bridge { folder: "Opening".into(), name: format!("Phase{}", phase - 1) },

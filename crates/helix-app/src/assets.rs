@@ -123,7 +123,8 @@ impl GameAssets {
             stage_w,
             stage_h,
             palette: paco::Palette::mac_system(),
-            files: GameFiles::new(&paths.mac_files, paths.pc_files.as_deref()),
+            files: GameFiles::new(&paths.mac_files, paths.pc_files.as_deref())
+                .with_installed(paths.mac_app.parent().map(Path::to_path_buf).unwrap_or_default()),
             mac_sounds: paths.mac_sounds.clone(),
             pc_rooms,
             cast_sounds,

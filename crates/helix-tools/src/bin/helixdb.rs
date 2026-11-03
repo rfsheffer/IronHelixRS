@@ -72,7 +72,9 @@ fn main() -> Result<()> {
                 let added = g.add_pc_rooms(&fs::read(&exe).with_context(|| format!("reading {}", exe.display()))?)?;
                 println!("PC release: added {}", added.join(", "));
             }
-            walk(g, &helixdb::GameFiles::new(files, pc.as_deref()))
+            // Installed files ("Misc Files") sit next to the game program.
+            let installed = app.parent().map(Path::to_path_buf).unwrap_or_default();
+            walk(g, &helixdb::GameFiles::new(files, pc.as_deref()).with_installed(installed))
         }
     }
 }
@@ -158,6 +160,53 @@ fn walk(g: GameData, files: &helixdb::GameFiles) -> Result<()> {
     }
     let missing: Vec<_> = scan_movies.iter().filter(|(f, n)| !exists(f, n)).collect();
     println!("{} scan movies and texts for the scan points, {} missing", scan_movies.len(), missing.len());
+    for (f, n) in missing.iter().take(30) {
+        println!("  missing {f}/{n}");
+    }
+
+    // Everything the computers can play: menu clips, win and movie actions,
+    // the fixed messages, video clues and the segues.
+    let mut computer: BTreeSet<(&str, String)> = BTreeSet::new();
+    let lines = &g.cmp_lines;
+    for (i, line) in lines.iter().enumerate() {
+        for part in line.split(',') {
+            if let Some(name) = part.strip_prefix("Movi(").and_then(|r| r.strip_suffix(')')) {
+                computer.insert(("Computer", name.to_string()));
+            }
+        }
+        if line.starts_with("Action,") {
+            // Win and movie actions belong to the keypad (Auth) rows.
+            let item = |offset: usize, n: usize| lines.get(i + offset).and_then(|l| l.split(',').nth(n)).unwrap_or("").trim();
+            for n in 0..4 {
+                if !item(1, n).starts_with("Auth") {
+                    continue;
+                }
+                for name in [item(3, n), item(4, n)] {
+                    let name = name.trim_end_matches('$');
+                    if !name.is_empty() && name != "#" && !name.starts_with('[') {
+                        computer.insert(("Computer", name.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    let fixed = [
+        "AccessDeniedDNA", "AccessDeniedLoc", "AccessDeniedCode", "AccessDeniedToCmp", "Win.Reject", "DefAlreadyOFF.cmp",
+        "DoorSensorsBOL.Cmp", "RightLoc.Eject", "WrongLoc.BulkHeads", "WrongLoc.Incin", "WrongLoc.Eject", "Target1",
+        "Target2", "Target3",
+    ];
+    computer.extend(fixed.iter().map(|n| ("Computer", n.to_string())));
+    for list in &g.video_clue_lists {
+        for clue in list.split([',', '\n']).map(str::trim).filter(|c| c.len() > 4) {
+            let number = &clue[clue.len() - 3..clue.len() - 1];
+            computer.insert(("Video", format!("Video {number}")));
+        }
+    }
+    computer.extend(["Win 1", "Win 2"].map(|n| ("Video", n.to_string())));
+    computer.extend(["BulkHeads", "TurnDefOff", "Eject"].map(|n| ("Segues", n.to_string())));
+    computer.extend(["Incin", "EndofShip", "UnableDeploy"].map(|n| ("Misc Files", n.to_string())));
+    let missing: Vec<_> = computer.iter().filter(|(f, n)| !exists(f, n)).collect();
+    println!("{} computer clips, video messages and segues, {} missing", computer.len(), missing.len());
     for (f, n) in missing.iter().take(30) {
         println!("  missing {f}/{n}");
     }

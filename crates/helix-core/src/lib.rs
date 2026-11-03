@@ -5,15 +5,19 @@
 //! to perform in order. Everything follows `docs/design.md`.
 //!
 //! So far: navigation (§4 of the design doc), clearance (§5), scanning
-//! (§6), energy (§10.1), the probe controls and the first phase change.
+//! (§6), the probe arm (§7), computers (§8), energy (§10.1), the probe
+//! controls and the phase changes.
 
 pub mod access;
+pub mod arm;
+pub mod computer;
 pub mod game;
 pub mod nav;
 pub mod rng;
 pub mod scan;
 
 pub use access::Access;
+pub use computer::{ComputerButton, ComputerData, ComputerView};
 pub use game::{Action, Button, ControlsPage, Function, Game, Interface};
 pub use nav::{NavAction, NavButtons, Navigator, Panel};
 pub use scan::{BoxLook, ScanText, ScanView};
@@ -36,6 +40,15 @@ pub enum Effect {
     /// Play a movie on the bridge screen (the score's `BridgeBG` frame),
     /// then return to the game interface: the phase movies.
     Bridge { folder: String, name: String },
+    /// Play a movie over the control screen (computer clips, video
+    /// messages). With `keep`, its last frame stays until
+    /// [`Effect::ErasePanel`] or the screen changes.
+    Panel { folder: String, name: String, keep: bool },
+    /// Clear a kept panel movie.
+    ErasePanel,
+    /// Play a 320x240 segue over the interface (disabling the defender, the
+    /// end of the ship).
+    Segue { folder: String, name: String },
 }
 
 impl Effect {

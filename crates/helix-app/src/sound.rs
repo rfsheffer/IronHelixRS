@@ -96,7 +96,9 @@ impl Sounds {
     pub async fn play(&mut self, name: &str) {
         if !self.loaded.contains_key(name) {
             let installed = std::fs::read(self.folder.join(name)).ok().and_then(|a| aiff_to_wav(&a));
-            let sound = match installed.or_else(|| self.cast.get(name).cloned()) {
+            // Director matches member names without case ("Menu Sound").
+            let cast = self.cast.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, wav)| wav.clone());
+            let sound = match installed.or(cast) {
                 Some(wav) => load_sound_from_bytes(&wav).await.ok(),
                 None => None,
             };

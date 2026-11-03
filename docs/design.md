@@ -157,7 +157,8 @@ facing S ends facing E; forward from 2.15 facing N ends facing W).
 ### 4.4 Elevators ✅
 
 - Elevator nodes (`*.E`) have a door like any other plus a **floor panel** (one button per level,
-  number keys 1-7 also work).
+  number keys 1-7 also work). The panel shows only when facing the elevator door, so that's
+  where the floor buttons and keys work.
 - Choosing another level: closes the door if open, plays `Elevator2`, then rides one floor per
   100 ticks, stepping the line by the node's **elevator up / down offset** per floor (Node items
   12/13), updating the map each floor; on arrival the door opens.
@@ -296,6 +297,19 @@ Each option has a function and arguments:
 | XCmp | leave the computer (retracts the arm) |
 | Trav | page to the next/previous screen of a multi-page record |
 
+Reading the table: the scripts address it by **line number** (line 1 is the `**Cmp` header).
+`Hier(NNN).CC` opens the record whose header is line NNN + 1 (options on NNN + 2, which is also
+the base for the location lines: row *n*'s ports are on line base + *n*), with clearance CC.
+Option text is read by character position: function in chars 1-4, `Hier` target in 6-8,
+clearance in 11-12, `Movi` clip name in 6-11. Only `Menu` records check clearance and location;
+`TravMenu` and `Action` records don't. An `Action` record's next lines, from its header, are +2
+clue-gated codes (`VV-CCCC/VV-CCCC` per row), +3 win actions, +4 movie actions, +5 tasks (rows
+1-4 for movie actions, 5-8 for win actions and the ETA clip). Win and movie actions belong to
+rows whose option is `Auth`; a few records list win actions under clip rows, which the game
+never reaches. Clip names differ in case from the files (`crew01`, `AccessDeniedLOC`); the Mac
+matched names without case, and so does this program. Computer clips and video messages are
+160×130 and play over the control screen at (335, 15); segues are 320×240 at (38, 40).
+
 ### 8.2 Item requirements ✅
 
 Menu rows 1-4 also check:
@@ -317,7 +331,8 @@ Menu rows 1-4 also check:
 ### 8.4 Authorization codes ✅
 
 - At game start, **four random 4-digit codes** are generated (1000-9999, never one of a fixed
-  list of codes that appear elsewhere as decoys). The first is "the" authorization code; the
+  list of codes that appear elsewhere as decoys; this program instead rejects any code found in
+  the Cmp table or the clue notes, which is where those decoys come from). The first is "the" authorization code; the
   other three are **mission (target) codes**. They are shown on the Mission computer screens.
 - The keypad takes up to 7 digits (beep when full), with clear and backspace; Enter checks,
   Cancel returns.
@@ -640,16 +655,18 @@ are done in `helix-core`, with the screen laid out from the score in `helix-app`
 rules core is done too: `Game` (helix-core `game`, `scan`, `access`) adds clearance (§5), the
 DNA kit and probe controls, auto and manual scanning with enhance and acquire (§6), energy
 (§10.1) and the phase 1 → 2 change with its bridge movie. The `director` crate also decodes the
-cast's sounds (`snd `) and pictures (`PICT`, the bridge background). Next: the defender, then the
-probe arm, then computers.
+cast's sounds (`snd `) and pictures (`PICT`, the bridge background). The probe arm (§7, helix-core
+`arm`) and the computers (§8, `computer`) are done too, with the defender's side of the computer
+actions (door sensors, bulkheads, turn off, incinerate, eject, phase 4) kept in a small stand-in
+until the defender exists. Next: the defender (§9).
 
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
 2. **Rules core** (no graphics; step 1 done): a deterministic `Game` with the probe, defender, DNA kit,
    phase, clock and energy; `apply(Action) -> Vec<Effect>` where effects are "play video X",
    "play sound Y", "show message Z". Seeded RNG. Unit tests per section of this document.
 3. **Defender**: path planner over the Def tree (§9.3), timers (§9.1), warning levels (§9.4).
-4. **Probe arm** (§7): computers are reached through it.
-5. **Computer**: record interpreter (§8), keypad, tasks.
+4. **Probe arm** (§7, done): computers are reached through it.
+5. **Computer** (done): record interpreter (§8), keypad, tasks.
 6. **Presentation**: window, view-window video playback (decoded PACo frames), control screen
    artwork from the Director cast, map, input.
 7. **Asset mapping**: Mac names → PC/Sega files for the definitive edition; Sega exclusives.

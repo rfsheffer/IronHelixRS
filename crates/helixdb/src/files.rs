@@ -1,8 +1,11 @@
 //! Finding the game's movies across the releases the player has.
 //!
-//! The Mac CD's `Iron Helix™ Files` folder comes first. For navigation
-//! movies the PC CD's `HELIX` folder is the fallback: its movies decode to the
-//! same pixels, and it alone has the hidden rooms' movies (design doc §14.4).
+//! The Mac CD's `Iron Helix™ Files` folder comes first, then the installed
+//! game's folder (`Misc Files`). For navigation movies the PC CD's `HELIX`
+//! folder is the fallback: its movies decode to the same pixels, and it alone
+//! has the hidden rooms' movies (design doc §14.4). Names are matched without
+//! regard to case where the exact name is missing, as on the Mac (the CD has
+//! `crew01` next to `Crew03`).
 //! The PC names are 8.3: `Navigation/L2/2.42.LN` is `NAV/L2<A-E>/2_42_LN`,
 //! `3.03.E.CW` is cut to `3_03_E_C`, and ladder ids drop the dots around the
 //! `L` (`2.1.1.L.D` is `2_1_1LD`).
@@ -14,6 +17,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Default)]
 pub struct GameFiles {
     mac: PathBuf,
+    installed: Option<PathBuf>,
     /// PC navigation movies by deck, keyed by [`key`].
     pc_nav: HashMap<u8, HashMap<String, PathBuf>>,
 }
@@ -40,7 +44,13 @@ impl GameFiles {
                 movies.insert(key(&file.file_name().to_string_lossy()), file.path());
             }
         }
-        Self { mac: mac.into(), pc_nav }
+        Self { mac: mac.into(), installed: None, pc_nav }
+    }
+
+    /// Also look in the installed game's folder (the one holding `Misc Files`).
+    pub fn with_installed(mut self, folder: impl Into<PathBuf>) -> Self {
+        self.installed = Some(folder.into());
+        self
     }
 
     /// Whether any PC movies were found.
@@ -56,15 +66,30 @@ impl GameFiles {
 
     /// A movie or clip by its Mac folder and name, from whichever release has it.
     pub fn find(&self, folder: &str, name: &str) -> Option<PathBuf> {
-        let mac = self.mac_path(folder, name);
-        if mac.is_file() {
-            return Some(mac);
+        for root in std::iter::once(&self.mac).chain(&self.installed) {
+            if let Some(found) = find_in(root, folder, name) {
+                return Some(found);
+            }
         }
         let deck = folder.strip_prefix("Navigation/L")?.parse::<u8>().ok()?;
         let movies = self.pc_nav.get(&deck)?;
         let cut: String = name.replace('.', "_").chars().take(8).collect();
         movies.get(&key(name)).or_else(|| movies.get(&key(&cut))).cloned()
     }
+}
+
+/// `root/folder/name`, matching each part without case if needed.
+fn find_in(root: &Path, folder: &str, name: &str) -> Option<PathBuf> {
+    let exact = folder.split('/').fold(root.to_path_buf(), |p, part| p.join(part)).join(name);
+    if exact.is_file() {
+        return Some(exact);
+    }
+    let mut path = root.to_path_buf();
+    for part in folder.split('/').chain(std::iter::once(name)) {
+        let entry = fs::read_dir(&path).ok()?.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))?;
+        path = entry.path();
+    }
+    path.is_file().then_some(path)
 }
 
 #[cfg(test)]
@@ -90,6 +115,7 @@ mod tests {
         assert_eq!(files.find("Navigation/L2", "2.1.1.L.D"), Some(l2.join("2_1_1LD")));
         assert_eq!(files.find("Navigation/L2", "2.43.LN"), None);
         assert_eq!(files.find("Messages", "LockedDoorsTxt"), None);
+        assert!(files.find("navigation/l2", "2.08.ln").is_some(), "case doesn't matter");
         fs::remove_dir_all(dir).ok();
     }
 }

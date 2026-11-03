@@ -63,6 +63,16 @@ pub struct GameData {
     pub no_arm: Vec<String>,
     /// DNA ids granted each clearance code 02-12 (index 0 = code 02).
     pub clearance: Vec<Vec<u8>>,
+    /// The Cmp table's text by line (index 0 = line 1), as the computer
+    /// scripts read it.
+    pub cmp_lines: Vec<String>,
+    /// The two video clue lists (`GameVidList` members): line `skill * 2`
+    /// of one, picked at random, places this game's video messages.
+    pub video_clue_lists: Vec<String>,
+    /// The note line added for each video clue (line N = clue N).
+    pub clue_notes: Vec<String>,
+    /// The notes text before any clue ("No Video Clues Recorded.").
+    pub notes_default: String,
     /// The raw tables, for anything not modeled yet.
     pub tables: Tables,
 }
@@ -118,6 +128,16 @@ impl GameData {
             probe_failures: list(by_name("ProbeFail")?, '/'),
             no_arm: list(by_name("NoArm")?, '*'),
             clearance: (0..11).map(|i| by_cast(cast::CLEARANCE + i).map(|t| parse_group(&t))).collect::<Result<_>>()?,
+            cmp_lines: by_cast(cast::CMP)?.lines().map(str::to_string).collect(),
+            video_clue_lists: texts.iter().filter(|m| m.name.as_deref() == Some("GameVidList")).map(|m| m.text.clone()).collect(),
+            // The notes member is "NotesCast"; the clue notes are the member before it.
+            clue_notes: texts
+                .iter()
+                .find(|m| m.name.as_deref() == Some("NotesCast"))
+                .and_then(|n| texts.iter().find(|m| m.cast + 1 == n.cast))
+                .map(|m| m.text.lines().map(str::to_string).collect())
+                .unwrap_or_default(),
+            notes_default: by_name("NotesDefault")?,
             tables,
         })
     }

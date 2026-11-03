@@ -278,7 +278,9 @@ impl Navigator {
             NavAction::TurnLeft if b.left => self.turn(false),
             NavAction::TurnRight if b.right => self.turn(true),
             NavAction::Door if self.door_ahead().is_some() => self.toggle_door(),
-            NavAction::Elevator(level) => self.ride(level),
+            // The floor buttons are on the elevator panel, shown when facing its door.
+            NavAction::Elevator(level) if self.door_ahead().is_some() => self.ride(level),
+            NavAction::Elevator(_) => Vec::new(),
             NavAction::ToggleRepeat => {
                 self.repeat = !self.repeat;
                 Vec::new()
