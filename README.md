@@ -17,9 +17,36 @@ crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Seg
 crates/director      library: Director 3 movies in resource forks (cast, text members, score scripts, labels)
 crates/helixdb       library: the game's data tables (navigation graph, defender, deaths, computers)
 crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
+crates/helix-app     the game itself (`ironhelix`), built on macroquad for desktop and mobile
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
 ```
+
+## Running the game: `ironhelix`
+
+Early days: it shows the interface and plays navigation movies in the view window; the rules
+from [docs/design.md](docs/design.md) come next.
+
+```
+cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
+```
+
+Defaults are the `out/mac/...` folders the extraction steps below create. Keys: N next movie,
+F pixel-perfect scaling, H debug overlay, Esc quit. `--window 2400x1080` tries other screen
+shapes; `--screenshot <png>` saves the screen after a few seconds and exits.
+
+The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
+screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain
+dark color if it's missing):
+
+- The texture is drawn at the full screen height, **anchored to its right edge** (the edge that
+  touches the stage) and cropped on the left when the space is narrower than the art. It is never
+  stretched unless the art is too narrow.
+- The right-hand panel is the same texture mirrored.
+- Each side is 1/6 of the screen width on 16:9 and up to ~0.44 × the screen height on 20:9
+  phones, so art about **0.45 × its height wide** (e.g. 500×1080) covers common phones. Put the
+  important detail near the right edge.
+- Screens taller than 4:3 get plain bars above and below for now.
 
 ## The `paco` tool
 
@@ -68,7 +95,12 @@ target/release/helixdb videos  "out/mac/app/Iron Helix™/Iron Helix™.rsrc" --
 ```
 
 `macx director` sorts the movie's text into `scripts/` (Lingo), `tables/` and `text/`, plus the
-score scripts, frame labels and cast names. **These are the game's own assets: they stay in
+score scripts, frame labels and cast names, and exports every bitmap to `bitmaps/` as PNG with
+its stage position in `bitmaps.tsv`. The movie is **Director 3.1** (the real version is at
+offset 36 of `VWCF`), with a **512×384 stage**. Bitmaps (`BITD`) are 8-bit (one is 1-bit),
+raw or run-length encoded (a control byte below 0x80 copies the next n+1 bytes, otherwise the
+next byte repeats 257−n times), and all use the Mac system palette; the format comes from
+[ScummVM's Director engine](https://github.com/scummvm/scummvm/tree/master/engines/director). **These are the game's own assets: they stay in
 `out/` and are never committed.** The engine reads them from the player's copy at runtime.
 
 `helixdb` parses the tables (see `crates/helixdb` for the field layouts):
@@ -231,3 +263,5 @@ Also used:
   cross-check of the FILM header and sample table.
 - [rfsheffer/PACoPlayer](https://github.com/rfsheffer/PACoPlayer): CoSA's `CAVF.h` and RLE notes,
   the starting point for the PACo decoder.
+- [ScummVM's Director engine](https://github.com/scummvm/scummvm/tree/master/engines/director):
+  the Director 3 config, cast record and `BITD` bitmap formats (independently reimplemented).

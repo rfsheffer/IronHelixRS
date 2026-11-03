@@ -16,10 +16,14 @@
 //! A member's resources share one ID: 1024 + its cast number. Director 3
 //! interpreted Lingo from source text, so scripts are stored as plain text.
 
+pub mod bitmap;
+
 use std::collections::{BTreeMap, HashMap};
 
 use macformats::rsrc;
 use thiserror::Error;
+
+pub use bitmap::{Bitmap, BitmapInfo, Rect};
 
 /// Resource ID of cast member 0; member `n` uses `CAST_ID_BASE + n`.
 pub const CAST_ID_BASE: i16 = 1024;
@@ -30,6 +34,8 @@ pub enum DirectorError {
     Truncated(&'static str),
     #[error("no {0} resource; is this a Director 3 movie?")]
     Missing(&'static str),
+    #[error("unsupported: {0}")]
+    Unsupported(String),
     #[error(transparent)]
     Mac(#[from] macformats::MacError),
 }
@@ -100,6 +106,61 @@ pub struct Action {
 pub struct Label {
     pub frame: u16,
     pub name: String,
+}
+
+/// The movie's configuration (`VWCF`).
+#[derive(Debug, Clone, Copy)]
+pub struct Config {
+    /// The real file version, at offset 36: Director 3.0 = 0x404,
+    /// 3.1 = 0x405. (The field at offset 2 stayed 0x400 from Director 2 to 3.)
+    pub version: u16,
+    /// Stage rectangle on the authoring screen; its size is the stage size.
+    pub stage: Rect,
+    /// Cast number of the first `VWCR` record.
+    pub first_cast: u16,
+    pub last_cast: u16,
+}
+
+impl Config {
+    pub fn stage_size(&self) -> (usize, usize) {
+        (self.stage.width(), self.stage.height())
+    }
+}
+
+/// Cast member types (first byte of a `VWCR` record).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastType {
+    Bitmap,
+    FilmLoop,
+    Text,
+    Palette,
+    Picture,
+    Sound,
+    Button,
+    Shape,
+    Movie,
+    DigitalVideo,
+    Script,
+    Other(u8),
+}
+
+impl CastType {
+    fn from_byte(b: u8) -> Self {
+        match b {
+            1 => Self::Bitmap,
+            2 => Self::FilmLoop,
+            3 => Self::Text,
+            4 => Self::Palette,
+            5 => Self::Picture,
+            6 => Self::Sound,
+            7 => Self::Button,
+            8 => Self::Shape,
+            9 => Self::Movie,
+            10 => Self::DigitalVideo,
+            11 => Self::Script,
+            n => Self::Other(n),
+        }
+    }
 }
 
 pub struct Movie {
@@ -251,6 +312,79 @@ impl Movie {
                 Some(Action { id: w[0].0, text: mac_text(text) })
             })
             .collect())
+    }
+
+    /// The movie configuration from `VWCF`. Layout: u16 length, u16 file
+    /// version (stuck at 0x400), stage rect (top, left, bottom, right),
+    /// u16 first cast, u16 last cast, ..., i16 real version at offset 36.
+    pub fn config(&self) -> Result<Config> {
+        let d = self.resource(b"VWCF", CAST_ID_BASE).ok_or(DirectorError::Missing("VWCF"))?;
+        let stage = Rect::parse(d.get(4..12).ok_or(DirectorError::Truncated("VWCF"))?)
+            .ok_or(DirectorError::Truncated("VWCF"))?;
+        let version = if d.len() > 37 { be16(d, 36, "VWCF")? } else { be16(d, 2, "VWCF")? };
+        Ok(Config {
+            version,
+            stage,
+            first_cast: be16(d, 12, "VWCF")?,
+            last_cast: be16(d, 14, "VWCF")?,
+        })
+    }
+
+    /// Cast records from `VWCR`, keyed by cast number. Each record starts
+    /// with a size byte (0 = empty slot); records are numbered from
+    /// `Config::first_cast`. The returned bytes start with the type byte.
+    pub fn cast_records(&self) -> Result<BTreeMap<u16, Vec<u8>>> {
+        let d = self.resource(b"VWCR", CAST_ID_BASE).ok_or(DirectorError::Missing("VWCR"))?;
+        let mut cast = self.config()?.first_cast;
+        let mut out = BTreeMap::new();
+        let mut p = 0;
+        while p < d.len() {
+            let size = d[p] as usize;
+            if size > 0 {
+                let rec = d.get(p + 1..p + 1 + size).ok_or(DirectorError::Truncated("VWCR"))?;
+                out.insert(cast, rec.to_vec());
+            }
+            p += 1 + size;
+            cast += 1;
+        }
+        Ok(out)
+    }
+
+    pub fn cast_type(&self, cast: u16) -> Result<Option<CastType>> {
+        Ok(self.cast_records()?.get(&cast).and_then(|r| r.first()).map(|&b| CastType::from_byte(b)))
+    }
+
+    /// Decode one bitmap member.
+    pub fn bitmap(&self, cast: u16) -> Result<Option<Bitmap>> {
+        let records = self.cast_records()?;
+        self.bitmap_with(&records, cast)
+    }
+
+    fn bitmap_with(&self, records: &BTreeMap<u16, Vec<u8>>, cast: u16) -> Result<Option<Bitmap>> {
+        let Some(rec) = records.get(&cast).filter(|r| r.first() == Some(&1)) else {
+            return Ok(None);
+        };
+        let Some(data) = self.resource(b"BITD", CAST_ID_BASE + cast as i16) else {
+            return Ok(None);
+        };
+        Ok(Some(bitmap::decode(cast, BitmapInfo::parse(rec)?, data)?))
+    }
+
+    /// Decode every bitmap member.
+    pub fn bitmaps(&self) -> Result<Vec<Bitmap>> {
+        let records = self.cast_records()?;
+        let mut out = Vec::new();
+        for &cast in records.keys() {
+            if let Some(b) = self.bitmap_with(&records, cast)? {
+                out.push(b);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Find a member by name.
+    pub fn cast_by_name(&self, name: &str) -> Result<Option<u16>> {
+        Ok(self.cast_names()?.into_iter().find(|(_, n)| n == name).map(|(c, _)| c))
     }
 
     /// Frame labels. `VWLB` layout: u16 count, then count + 1 entries of

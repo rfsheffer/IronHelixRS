@@ -220,6 +220,36 @@ fn director_dump(rsrc_path: &Path, out: &Path) -> Result<()> {
     fs::write(out.join("cast-names.tsv"), s)?;
     fs::write(out.join("index.tsv"), index)?;
 
+    // Bitmaps, drawn with the Mac system palette (all Iron Helix bitmaps use it).
+    let palette = paco::Palette::mac_system().to_rgb_bytes();
+    let bitmaps = movie.bitmaps()?;
+    let mut table = String::from("cast\tname\twidth\theight\tleft\ttop\treg_h\treg_v\tbpp\tpalette\tfile\n");
+    fs::create_dir_all(out.join("bitmaps"))?;
+    for b in &bitmaps {
+        let name = names.get(&b.cast).map(|n| safe_name(n)).unwrap_or_default();
+        let file = if name.is_empty() { format!("bitmaps/{:04}.png", b.cast) } else { format!("bitmaps/{:04} {name}.png", b.cast) };
+        helix_tools::output::write_png(
+            &out.join(&file),
+            b.width,
+            b.height,
+            &helix_tools::output::Pixels::Indexed { data: &b.pixels, palette: &palette },
+        )?;
+        let i = &b.info;
+        table.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{file}\n",
+            b.cast, name, b.width, b.height, i.rect.left, i.rect.top, i.reg_h, i.reg_v, i.bits_per_pixel, i.palette
+        ));
+    }
+    fs::write(out.join("bitmaps.tsv"), table)?;
+    let config = movie.config()?;
+    println!(
+        "Director version {:#x}, stage {}x{}, {} bitmaps",
+        config.version,
+        config.stage.width(),
+        config.stage.height(),
+        bitmaps.len()
+    );
+
     let count = |k| texts.iter().filter(|m| m.kind() == k).count();
     println!(
         "{} scripts, {} tables, {} other text members, {} score scripts, {} labels, {} named members -> {}",

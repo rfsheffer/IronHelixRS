@@ -1,0 +1,15 @@
+[package]
+name = "helix-app"
+description = "Iron Helix, the game (macroquad front end)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ironhelix"
+path = "src/main.rs"
+
+[dependencies]
+director.workspace = true
+paco.workspace = true
+macroquad = "0.4"
