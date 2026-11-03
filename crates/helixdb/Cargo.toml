@@ -1,0 +1,10 @@
+[package]
+name = "helixdb"
+description = "Iron Helix game data: the navigation graph, defender, death, scan and computer tables"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+director.workspace = true
+thiserror.workspace = true

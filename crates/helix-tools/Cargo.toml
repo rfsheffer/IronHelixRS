@@ -29,10 +29,16 @@ path = "src/bin/tomp4.rs"
 name = "xref"
 path = "src/bin/xref.rs"
 
+[[bin]]
+name = "helixdb"
+path = "src/bin/helixdb.rs"
+
 [dependencies]
+helixdb.workspace = true
 paco.workspace = true
 macformats.workspace = true
 cdimage.workspace = true
+director.workspace = true
 segafilm.workspace = true
 anyhow.workspace = true
 clap.workspace = true

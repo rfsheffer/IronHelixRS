@@ -14,7 +14,9 @@ crates/paco          library: PACo (CAVF) movie parser, RLE decoder, frame compo
 crates/macformats    library: StuffIt 5 (+Arsenic), resource forks, DiskCopy NDIF (+ADC), HFS
 crates/cdimage       library: ISO9660 on raw (2352-byte) or cooked (2048-byte) CD images
 crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Sega CD PCM audio
-crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`)
+crates/director      library: Director 3 movies in resource forks (cast, text members, score scripts, labels)
+crates/helixdb       library: the game's data tables (navigation graph, defender, deaths, computers)
+crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
 ```
@@ -49,6 +51,38 @@ target/release/macx hfs-extract out/mac/helix.hfs -o out/mac/files
 
 Resource forks are written next to each file as `<name>.rsrc`; type/creator codes go to
 `_finder.tsv`. `macx hfs-ls` lists a volume without extracting.
+
+## The game's logic and data: `macx director` and `helixdb`
+
+The Mac game program is inside `Iron Helix™ Installer`, whose data fork is a classic StuffIt
+(`SIT!`) archive. The program is a **Director 3 projector** (creator `MMPB`): its resource fork
+holds a Director movie, and Director 3 stored Lingo as source text, so the game's scripts and
+data tables are all readable text members.
+
+```
+target/release/macx sit-extract "out/mac/files/Iron Helix™ Installer" -o out/mac/app
+target/release/macx director "out/mac/app/Iron Helix™/Iron Helix™.rsrc" -o out/mac/director
+target/release/helixdb summary "out/mac/app/Iron Helix™/Iron Helix™.rsrc"
+target/release/helixdb nodes   "out/mac/app/Iron Helix™/Iron Helix™.rsrc" --level 1
+target/release/helixdb videos  "out/mac/app/Iron Helix™/Iron Helix™.rsrc" --nav "out/mac/files/Iron Helix™ Files/Navigation"
+```
+
+`macx director` sorts the movie's text into `scripts/` (Lingo), `tables/` and `text/`, plus the
+score scripts, frame labels and cast names. **These are the game's own assets: they stay in
+`out/` and are never committed.** The engine reads them from the player's copy at runtime.
+
+`helixdb` parses the tables (see `crates/helixdb` for the field layouts):
+
+- **Navigation** (Node, Map, Ports, Scan 1-5): 110 nodes over 6 levels. The four tables are
+  line-aligned (line N of each describes the same node), and exits are *relative line offsets*,
+  so separator lines count. Per node: an exit and a door for each facing (N/E/S/W), ladders, map
+  coordinates, the probe arm's target per facing, and scan points per skill level.
+- **Defender** (Def): its own graph, arranged as a binary search tree over node numbers for
+  pathing, with line-of-sight lists.
+- **Deaths** (DeathDB), **computer screens** (Cmp), probe-failure spots and no-arm spots.
+
+Check: the movement videos implied by the graph (`<node>.F<dir>`, `.B<dir>` unless a door is
+behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD.
 
 ## The Sega CD version: `isox` and `sfilm`
 
@@ -126,7 +160,8 @@ All 3,353 PACo movies in the Windows release decode with zero errors.
   pixel-identical to a PC movie; the rest differ in packaging (interlacing, frame rate, embedded
   sound vs. the PC's separate WAVs), re-rendered random static effects, and a slightly different set
   of small 144×32 navigation strips. The game application itself is inside the installers' data
-  forks, which are classic StuffIt 1.5 (`SIT!`) archives, not yet supported.
+  forks (classic StuffIt `SIT!` archives with stored entries), and it is a Director 3 projector
+  whose Lingo and data tables are readable (see above).
 - **Sega CD:** `.img` is Mode 1 / 2352-byte-sector ISO9660 (volume `MEGA_CD`) plus a CD audio
   track. Same folder layout as the PC (`NAV`, `SEGUES`, `VIDEO`, ...), but the videos are Sega
   FILM files using the "Cinepak for Sega" codec (see below).

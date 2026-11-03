@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use macformats::{hfs, ndif, rsrc, sit5};
+use macformats::{hfs, ndif, rsrc, sit1, sit5};
 
 #[derive(Parser)]
 #[command(about = "Extract files from StuffIt 5 archives, DiskCopy images and HFS volumes")]
@@ -49,6 +49,14 @@ enum Command {
         #[arg(short, long)]
         out: PathBuf,
     },
+    /// Dump a Director 3 movie's text: Lingo scripts, data tables, other text
+    /// members, score scripts and frame labels. Takes the resource fork of
+    /// the movie or projector.
+    Director {
+        rsrc: PathBuf,
+        #[arg(short, long)]
+        out: PathBuf,
+    },
     /// List the files on a raw HFS volume.
     HfsLs { volume: PathBuf },
     /// Extract every file from a raw HFS volume. Resource forks are written as
@@ -65,6 +73,7 @@ fn main() -> Result<()> {
         Command::Sit { archive } => sit_list(&archive),
         Command::SitExtract { archive, out, rsrc_only } => sit_extract(&archive, &out, rsrc_only),
         Command::Ndif { image, rsrc, out } => ndif_expand(&image, &rsrc, &out),
+        Command::Director { rsrc, out } => director_dump(&rsrc, &out),
         Command::HfsLs { volume } => hfs_ls(&volume),
         Command::HfsExtract { volume, out } => hfs_extract(&volume, &out),
     }
@@ -76,6 +85,22 @@ fn four_cc(b: &[u8; 4]) -> String {
 
 fn sit_list(path: &Path) -> Result<()> {
     let data = fs::read(path)?;
+    if sit1::is_sit1(&data) {
+        let archive = sit1::Archive::parse(&data)?;
+        for e in &archive.entries {
+            println!(
+                "{}  [{}/{}]  data {} bytes (method {}), rsrc {} bytes (method {})",
+                e.path.join("/"),
+                four_cc(&e.file_type),
+                four_cc(&e.creator),
+                e.data.len,
+                e.data.method,
+                e.rsrc.len,
+                e.rsrc.method
+            );
+        }
+        return Ok(());
+    }
     let archive = sit5::Archive::parse(&data)?;
     for e in &archive.entries {
         println!("{}  [{}/{}]", e.name, four_cc(&e.file_type), four_cc(&e.creator));
@@ -89,6 +114,9 @@ fn sit_list(path: &Path) -> Result<()> {
 
 fn sit_extract(path: &Path, out: &Path, rsrc_only: bool) -> Result<()> {
     let data = fs::read(path)?;
+    if sit1::is_sit1(&data) {
+        return sit1_extract(&data, out, rsrc_only);
+    }
     let archive = sit5::Archive::parse(&data)?;
     fs::create_dir_all(out)?;
     for e in &archive.entries {
@@ -104,6 +132,105 @@ fn sit_extract(path: &Path, out: &Path, rsrc_only: bool) -> Result<()> {
             println!("{name}: {} bytes", e.data.len);
         }
     }
+    Ok(())
+}
+
+/// Extract a classic StuffIt archive, keeping its folder layout.
+fn sit1_extract(data: &[u8], out: &Path, rsrc_only: bool) -> Result<()> {
+    let archive = sit1::Archive::parse(data)?;
+    let mut manifest = String::from("path\ttype\tcreator\tfinder_flags\tdata_len\trsrc_len\n");
+    for e in &archive.entries {
+        let rel: PathBuf = e.path.iter().map(|p| safe_name(p)).collect();
+        let dest = out.join(&rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if e.rsrc.len > 0 {
+            let mut r = dest.clone().into_os_string();
+            r.push(".rsrc");
+            fs::write(r, archive.extract(&e.rsrc).with_context(|| format!("resource fork of {}", rel.display()))?)?;
+        }
+        if !rsrc_only {
+            fs::write(&dest, archive.extract(&e.data).with_context(|| format!("data fork of {}", rel.display()))?)?;
+        }
+        manifest.push_str(&format!(
+            "{}\t{}\t{}\t{:#06x}\t{}\t{}\n",
+            rel.display(),
+            four_cc(&e.file_type),
+            four_cc(&e.creator),
+            e.finder_flags,
+            e.data.len,
+            e.rsrc.len
+        ));
+    }
+    fs::create_dir_all(out)?;
+    fs::write(out.join("_finder.tsv"), manifest)?;
+    println!("extracted {} files to {}", archive.entries.len(), out.display());
+    Ok(())
+}
+
+fn director_dump(rsrc_path: &Path, out: &Path) -> Result<()> {
+    use director::{Movie, TextKind};
+
+    let fork = fs::read(rsrc_path).with_context(|| format!("reading {}", rsrc_path.display()))?;
+    let movie = Movie::from_resource_fork(&fork)?;
+    let mut index = String::from("cast\tkind\ttitle\tchars\tfile\n");
+
+    let mut write = |folder: &str, ext: &str, m: &director::TextMember, kind: &str| -> Result<()> {
+        let title = m.title().map(|t| safe_name(&t)).unwrap_or_default();
+        let file = if title.is_empty() {
+            format!("{folder}/{:04}.{ext}", m.cast)
+        } else {
+            format!("{folder}/{:04} {title}.{ext}", m.cast)
+        };
+        let path = out.join(&file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, &m.text)?;
+        index.push_str(&format!("{}\t{kind}\t{title}\t{}\t{file}\n", m.cast, m.text.chars().count()));
+        Ok(())
+    };
+
+    let texts = movie.texts()?;
+    for m in &texts {
+        match m.kind() {
+            TextKind::Script => write("scripts", "lingo", m, "script")?,
+            TextKind::Table => write("tables", "txt", m, "table")?,
+            TextKind::Text => write("text", "txt", m, "text")?,
+        }
+    }
+    for m in &movie.member_scripts()? {
+        write("member-scripts", "lingo", m, "member-script")?;
+    }
+
+    let actions = movie.actions()?;
+    let mut s = String::new();
+    for a in &actions {
+        s.push_str(&format!("-- score script {}\n{}\n\n", a.id, a.text));
+    }
+    fs::write(out.join("score-scripts.lingo"), s)?;
+
+    let labels = movie.labels()?;
+    let s: String = labels.iter().map(|l| format!("{}\t{}\n", l.frame, l.name)).collect();
+    fs::write(out.join("labels.tsv"), s)?;
+
+    let names = movie.cast_names()?;
+    let s: String = names.iter().map(|(c, n)| format!("{c}\t{n}\n")).collect();
+    fs::write(out.join("cast-names.tsv"), s)?;
+    fs::write(out.join("index.tsv"), index)?;
+
+    let count = |k| texts.iter().filter(|m| m.kind() == k).count();
+    println!(
+        "{} scripts, {} tables, {} other text members, {} score scripts, {} labels, {} named members -> {}",
+        count(TextKind::Script),
+        count(TextKind::Table),
+        count(TextKind::Text),
+        actions.len(),
+        labels.len(),
+        names.len(),
+        out.display()
+    );
     Ok(())
 }
 

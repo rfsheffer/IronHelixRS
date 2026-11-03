@@ -1,6 +1,7 @@
 //! Readers for the classic Macintosh formats the Mac release of Iron Helix
 //! comes wrapped in:
 //!
+//! - [`sit1`]: classic StuffIt (`SIT!`) archives, stored entries only
 //! - [`sit5`]: StuffIt 5 archives, including the "Arsenic" compression method
 //! - [`rsrc`]: resource forks
 //! - [`ndif`]: DiskCopy 6 (NDIF) disk images, including ADC compression
@@ -14,6 +15,7 @@ pub mod hfs;
 pub mod macroman;
 pub mod ndif;
 pub mod rsrc;
+pub mod sit1;
 pub mod sit5;
 
 use thiserror::Error;

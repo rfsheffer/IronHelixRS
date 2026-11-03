@@ -12,6 +12,8 @@ paco = { path = "crates/paco" }
 macformats = { path = "crates/macformats" }
 cdimage = { path = "crates/cdimage" }
 segafilm = { path = "crates/segafilm" }
+director = { path = "crates/director" }
+helixdb = { path = "crates/helixdb" }
 thiserror = "2"
 crc32fast = "1"
 anyhow = "1"

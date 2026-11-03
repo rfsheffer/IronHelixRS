@@ -1,0 +1,10 @@
+[package]
+name = "director"
+description = "Reader for MacroMind/Macromedia Director 3 movies stored in resource forks"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+macformats.workspace = true
+thiserror.workspace = true

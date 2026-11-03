@@ -145,6 +145,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "director"
+version = "0.1.0"
+dependencies = [
+ "macformats",
+ "thiserror",
+]
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -187,11 +195,21 @@ dependencies = [
  "anyhow",
  "cdimage",
  "clap",
+ "director",
  "gif",
+ "helixdb",
  "macformats",
  "paco",
  "png",
  "segafilm",
+]
+
+[[package]]
+name = "helixdb"
+version = "0.1.0"
+dependencies = [
+ "director",
+ "thiserror",
 ]
 
 [[package]]
