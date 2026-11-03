@@ -4,14 +4,16 @@
 //! any screen with decorative side panels, and navigation through the whole
 //! ship (helix-core): movies, location strips, doors, ladders, elevators,
 //! the map and sounds, plus the PC release's hidden rooms when its files
-//! are given.
+//! are given. Scanning, the DNA kit, door clearance, energy, the probe
+//! controls and the first phase change work too.
 //!
 //! Desktop: `ironhelix [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
 //! [--mac-sounds <Iron Helix Sounds>] [--pc-files <HELIX>] [--side-panel <png>] [--window WxH]
-//! [--screenshot <png>]`.
+//! [--skill 1-5] [--seed N] [--screenshot <png>]`.
 //! Keys: arrows move/turn, U/D ladders, Tab repeat moves, Enter door, 1-6
-//! elevator, M map mode, P game phase (testing), F pixel-perfect scaling,
-//! H debug overlay, Esc quit.
+//! elevator, S scan, C probe controls, M map mode, P game phase and G grant
+//! DNA and skip to phase 2 (testing),
+//! F pixel-perfect scaling, H debug overlay, Esc quit.
 
 mod assets;
 mod layout;
@@ -30,7 +32,7 @@ use sprites::Canvas;
 const PANEL_COLOR: Color = Color::new(0.10, 0.10, 0.11, 1.0);
 
 /// Keys passed on to the game screen.
-const GAME_KEYS: [KeyCode; 19] = [
+const GAME_KEYS: [KeyCode; 22] = [
     KeyCode::Up,
     KeyCode::Down,
     KeyCode::Left,
@@ -50,6 +52,9 @@ const GAME_KEYS: [KeyCode; 19] = [
     KeyCode::Space,
     KeyCode::M,
     KeyCode::P,
+    KeyCode::S,
+    KeyCode::C,
+    KeyCode::G,
 ];
 
 fn window_conf() -> Conf {
@@ -125,6 +130,57 @@ async fn show_error(message: String) {
     }
 }
 
+/// One `--autoplay` step.
+enum Step {
+    Key(KeyCode),
+    Click(f32, f32),
+}
+
+/// `FFLRO2(380,60)A`: letters are keys (F/B forward/back, L/R turn, U/D
+/// ladder, O door, 1-6 elevator, M map mode, P phase, S scan, C controls,
+/// K click the scan point, A acquire, G grant DNA and skip to phase 2);
+/// `(x,y)` is a click.
+fn parse_autoplay(s: &str) -> std::collections::VecDeque<Step> {
+    let mut steps = std::collections::VecDeque::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '(' {
+            let inner: String = chars.by_ref().take_while(|&c| c != ')').collect();
+            if let Some((x, y)) = inner.split_once(',')
+                && let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse())
+            {
+                steps.push_back(Step::Click(x, y));
+            }
+            continue;
+        }
+        let key = match c.to_ascii_uppercase() {
+            'F' => KeyCode::Up,
+            'B' => KeyCode::Down,
+            'L' => KeyCode::Left,
+            'R' => KeyCode::Right,
+            'U' => KeyCode::U,
+            'D' => KeyCode::D,
+            'O' => KeyCode::Enter,
+            'M' => KeyCode::M,
+            'P' => KeyCode::P,
+            'S' => KeyCode::S,
+            'C' => KeyCode::C,
+            'K' => KeyCode::K,
+            'A' => KeyCode::A,
+            'G' => KeyCode::G,
+            '1' => KeyCode::Key1,
+            '2' => KeyCode::Key2,
+            '3' => KeyCode::Key3,
+            '4' => KeyCode::Key4,
+            '5' => KeyCode::Key5,
+            '6' => KeyCode::Key6,
+            _ => continue,
+        };
+        steps.push_back(Step::Key(key));
+    }
+    steps
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
     let paths = Paths::from_args();
@@ -152,36 +208,16 @@ async fn main() {
     let mut pixel_perfect = false;
     let mut show_debug = std::env::args().any(|a| a == "--debug");
     let mut frames_drawn = 0u32;
-    // `--autoplay FFLRO2`: moves fed in one at a time (F/B forward/back,
-    // L/R turn, U/D ladder, O door, 1-6 elevator, M map mode, P phase), for testing.
+    // `--autoplay FFLRO2(380,60)`: steps fed in one at a time, for testing
+    // (see parse_autoplay).
     let args: Vec<String> = std::env::args().collect();
-    let mut autoplay: std::collections::VecDeque<KeyCode> = args
+    let mut autoplay: std::collections::VecDeque<Step> = args
         .windows(2)
         .find(|p| p[0] == "--autoplay")
-        .map(|p| {
-            p[1].chars()
-                .filter_map(|c| match c.to_ascii_uppercase() {
-                    'F' => Some(KeyCode::Up),
-                    'B' => Some(KeyCode::Down),
-                    'L' => Some(KeyCode::Left),
-                    'R' => Some(KeyCode::Right),
-                    'U' => Some(KeyCode::U),
-                    'D' => Some(KeyCode::D),
-                    'O' => Some(KeyCode::Enter),
-                    'M' => Some(KeyCode::M),
-                    'P' => Some(KeyCode::P),
-                    '1' => Some(KeyCode::Key1),
-                    '2' => Some(KeyCode::Key2),
-                    '3' => Some(KeyCode::Key3),
-                    '4' => Some(KeyCode::Key4),
-                    '5' => Some(KeyCode::Key5),
-                    '6' => Some(KeyCode::Key6),
-                    _ => None,
-                })
-                .collect()
-        })
+        .map(|p| parse_autoplay(&p[1]))
         .unwrap_or_default();
     let autoplaying = !autoplay.is_empty();
+    let shot_frame: Option<u32> = args.windows(2).find(|p| p[0] == "--screenshot-frame").and_then(|p| p[1].parse().ok());
     let mut idle_frames = 0u32;
 
     loop {
@@ -200,8 +236,13 @@ async fn main() {
             }
         }
         if !game.busy() {
-            if let Some(key) = autoplay.pop_front() {
-                game.key(key);
+            match autoplay.pop_front() {
+                Some(Step::Key(key)) => game.key(key),
+                Some(Step::Click(x, y)) => {
+                    game.press(x, y);
+                    game.release();
+                }
+                None => {}
             }
             idle_frames += 1;
         } else {
@@ -210,19 +251,29 @@ async fn main() {
 
         let layout = Layout::fit(screen_width(), screen_height(), assets.stage_w as f32, assets.stage_h as f32, pixel_perfect);
 
-        // Mouse and touch both become taps in stage coordinates.
-        let mut taps = Vec::new();
+        // Mouse and touch both become presses, drags and releases in stage
+        // coordinates.
+        let (mx, my) = mouse_position();
         if is_mouse_button_pressed(MouseButton::Left) {
-            let (x, y) = mouse_position();
-            taps.extend(layout.screen_to_stage(x, y));
+            if let Some((x, y)) = layout.screen_to_stage(mx, my) {
+                game.press(x, y);
+            }
+        } else if is_mouse_button_down(MouseButton::Left)
+            && let Some((x, y)) = layout.screen_to_stage(mx, my)
+        {
+            game.drag(x, y);
+        }
+        if is_mouse_button_released(MouseButton::Left) {
+            game.release();
         }
         for t in touches() {
-            if t.phase == TouchPhase::Started {
-                taps.extend(layout.screen_to_stage(t.position.x, t.position.y));
+            let at = layout.screen_to_stage(t.position.x, t.position.y);
+            match (t.phase, at) {
+                (TouchPhase::Started, Some((x, y))) => game.press(x, y),
+                (TouchPhase::Moved, Some((x, y))) => game.drag(x, y),
+                (TouchPhase::Ended | TouchPhase::Cancelled, _) => game.release(),
+                _ => {}
             }
-        }
-        for (x, y) in taps {
-            game.tap(x, y);
         }
 
         game.update(&assets, get_frame_time()).await;
@@ -242,12 +293,21 @@ async fn main() {
 
         if show_debug {
             let nav = game.navigator();
+            let g = game.game();
             let lines = [
+                format!(
+                    "skill {}  energy {}/{}  DNA kit {:?}  auto scan {}",
+                    g.skill(),
+                    g.energy(),
+                    helix_core::game::ENERGY_FULL,
+                    g.kit(),
+                    if g.auto_scan() { "on" } else { "off" }
+                ),
                 format!("node {} (line {}) facing {} {}  phase {}", nav.node().id, nav.line(), game.facing(), if nav.in_ladder() { "in ladder" } else { "" }, nav.phase()),
                 format!("PC rooms: {}", if assets.pc_rooms.is_empty() { "none (no PC files)".to_owned() } else { assets.pc_rooms.join(", ") }),
                 format!("last movie {}", game.status),
                 format!("stage {}x{} at {:.2}x{}", assets.stage_w, assets.stage_h, layout.scale, if pixel_perfect { " (pixel perfect)" } else { "" }),
-                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  M map  P phase  F pixel-perfect  H hide  Esc quit".to_owned(),
+                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  S scan  C controls  M map  P phase  G phase 2  F pixel-perfect  H hide  Esc quit".to_owned(),
             ];
             for (i, line) in lines.iter().enumerate() {
                 draw_text(line, 8.0, 18.0 + i as f32 * 18.0, 18.0, YELLOW);
@@ -255,7 +315,12 @@ async fn main() {
         }
 
         frames_drawn += 1;
-        let done = if autoplaying { autoplay.is_empty() && idle_frames > 20 } else { frames_drawn == 150 };
+        // `--screenshot-frame N` shoots at that frame instead (mid-movie).
+        let done = match shot_frame {
+            Some(n) => frames_drawn == n,
+            None if autoplaying => autoplay.is_empty() && idle_frames > 20,
+            None => frames_drawn == 150,
+        };
         if let Some(path) = &paths.screenshot
             && done
         {

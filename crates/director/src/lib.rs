@@ -17,7 +17,9 @@
 //! interpreted Lingo from source text, so scripts are stored as plain text.
 
 pub mod bitmap;
+pub mod pict;
 pub mod score;
+pub mod sound;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -25,6 +27,8 @@ use macformats::rsrc;
 use thiserror::Error;
 
 pub use bitmap::{Bitmap, BitmapInfo, Rect};
+pub use pict::Picture;
+pub use sound::SampledSound;
 
 /// Resource ID of cast member 0; member `n` uses `CAST_ID_BASE + n`.
 pub const CAST_ID_BASE: i16 = 1024;
@@ -381,6 +385,16 @@ impl Movie {
             }
         }
         Ok(out)
+    }
+
+    /// Decode one picture member.
+    pub fn picture(&self, cast: u16) -> Result<Option<Picture>> {
+        self.resource(b"PICT", CAST_ID_BASE + cast as i16).map(pict::decode).transpose()
+    }
+
+    /// Decode one sound member.
+    pub fn sound(&self, cast: u16) -> Result<Option<SampledSound>> {
+        self.resource(b"snd ", CAST_ID_BASE + cast as i16).map(sound::parse).transpose()
     }
 
     /// The score: what's on stage in each frame (frame 1 at index 0).

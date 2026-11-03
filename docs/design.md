@@ -208,7 +208,9 @@ On arriving at a node the control screen shows:
 
 ### 5.1 The DNA kit ✅
 
-- Holds up to **3** DNA samples (crew member ids `01`-`12`; id 12 is stored as 11 ❓ why).
+- Holds up to **3** DNA samples (crew member ids `01`-`12`; id 12 is stored as 11 because the
+  inventory icons are casts 146 + (id − 1)·2 (+1 selected), and crew 12's pair would land on
+  168-169, the empty screen and the scan interface; 11's icon reads "UNIDENTIFIED").
 - Managed from **probe controls → DNA inventory**: shows the samples, select any, delete selected.
 
 ### 5.2 Clearance check ✅
@@ -622,7 +624,6 @@ title) and the PC's 11 kHz `RIH_TUNE.WAV`. It replaces both. The extended ending
 ## 15. Open questions
 
 - ❓ Number of skill buttons on the title screen (data supports 5).
-- ❓ Why DNA 12 is stored as 11.
 - ❓ Node 2.19 carries large values in the elevator columns; probably unused or map-related.
 - ❓ Second Scan item per facing (the scripts read only the first); may be unused.
 - ❓ Exact meaning of the remaining Cmp "vars" items and Def items not read by the scripts.
@@ -635,17 +636,23 @@ title) and the PC's 11 kHz `RIH_TUNE.WAV`. It replaces both. The extended ending
 
 Status: data (1) and navigation (§4: moves, turns, repeat moves, ladders, doors, the garbage
 chute, elevators, the science-lab bend, and the PC's hidden rooms with their phase-locked doors)
-are done in `helix-core`, with the screen laid out from the score in `helix-app`. Clearance, the defender and everything after are next.
+are done in `helix-core`, with the screen laid out from the score in `helix-app`. Step 1 of the
+rules core is done too: `Game` (helix-core `game`, `scan`, `access`) adds clearance (§5), the
+DNA kit and probe controls, auto and manual scanning with enhance and acquire (§6), energy
+(§10.1) and the phase 1 → 2 change with its bridge movie. The `director` crate also decodes the
+cast's sounds (`snd `) and pictures (`PICT`, the bridge background). Next: the defender, then the
+probe arm, then computers.
 
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
-2. **Rules core** (no graphics): a deterministic `GameState` with the probe, defender, DNA kit,
+2. **Rules core** (no graphics; step 1 done): a deterministic `Game` with the probe, defender, DNA kit,
    phase, clock and energy; `apply(Action) -> Vec<Effect>` where effects are "play video X",
    "play sound Y", "show message Z". Seeded RNG. Unit tests per section of this document.
 3. **Defender**: path planner over the Def tree (§9.3), timers (§9.1), warning levels (§9.4).
-4. **Computer**: record interpreter (§8), keypad, tasks.
-5. **Presentation**: window, view-window video playback (decoded PACo frames), control screen
-   artwork from the Director cast (`BITD`/`CLUT` decoding still to do), map, input.
-6. **Asset mapping**: Mac names → PC/Sega files for the definitive edition; Sega exclusives.
+4. **Probe arm** (§7): computers are reached through it.
+5. **Computer**: record interpreter (§8), keypad, tasks.
+6. **Presentation**: window, view-window video playback (decoded PACo frames), control screen
+   artwork from the Director cast, map, input.
+7. **Asset mapping**: Mac names → PC/Sega files for the definitive edition; Sega exclusives.
    Per §14.4: a movie resolver (Mac, then PC names); read the PC node records from the
    player's `HELIX.EXE` and append the four hidden rooms to the graph; phase-locked doors; the
    Sega theme from the disc image's audio track; `ENDING.SEG` after a skill-5 win.

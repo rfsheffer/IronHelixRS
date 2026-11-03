@@ -3,14 +3,15 @@
 //! The probe stands on a node (a line of the node tables) facing N/E/S/W.
 //! Moves play a movie and step the line by the exit's offset; turns play a
 //! movie and change the facing; ladders and elevators change level. Doors
-//! open and close in place. Clearance (DNA) and the defender come later; for
-//! now every door opens except the permanently locked ones and, before their
-//! phase, the battle-damaged doors to the PC release's hidden rooms.
+//! open and close in place when the probe has clearance (§5.2); `00` doors
+//! never open, and the battle-damaged doors to the PC release's hidden rooms
+//! wait for their phase.
 
 use helixdb::Direction;
 use helixdb::nav::{Ladder, NavGraph, NavNode};
 
 use crate::Effect;
+use crate::access::Access;
 
 /// Where the probe starts: line 87 (node 4.04) facing North.
 pub const START_LINE: usize = 87;
@@ -67,8 +68,8 @@ pub struct Navigator {
     door_open: bool,
     repeat: bool,
     chute_open: bool,
-    /// Game phase (1-4, design doc §1); battle-damaged doors depend on it.
-    phase: u8,
+    /// Phase and DNA kit, which doors check.
+    access: Access,
 }
 
 /// The kind of move a button makes (forward/back/up/down).
@@ -95,7 +96,7 @@ impl Navigator {
     }
 
     pub fn at(graph: NavGraph, line: usize, facing: Direction) -> Self {
-        Self { graph, line, facing, in_ladder: false, door_open: false, repeat: false, chute_open: false, phase: 1 }
+        Self { graph, line, facing, in_ladder: false, door_open: false, repeat: false, chute_open: false, access: Access::default() }
     }
 
     pub fn graph(&self) -> &NavGraph {
@@ -127,25 +128,33 @@ impl Navigator {
     }
 
     pub fn phase(&self) -> u8 {
-        self.phase
+        self.access.phase()
     }
 
     pub fn set_phase(&mut self, phase: u8) {
-        self.phase = phase.clamp(1, 4);
+        self.access.set_phase(phase);
+    }
+
+    pub fn access(&self) -> &Access {
+        &self.access
+    }
+
+    pub fn access_mut(&mut self) -> &mut Access {
+        &mut self.access
     }
 
     /// Everything that tells one navigation state from another (for
     /// exhaustively exploring the ship in tests and tools).
     pub fn state_key(&self) -> (usize, Direction, bool, bool, bool, u8) {
-        (self.line, self.facing, self.in_ladder, self.door_open, self.chute_open, self.phase)
+        (self.line, self.facing, self.in_ladder, self.door_open, self.chute_open, self.phase())
     }
 
     /// A battle-damaged door (PC release) opens on deck 2 from phase 2 and on
     /// deck 4 in phase 3 only, as `HELIX.EXE` checks it (design doc §14.4).
     fn damage_cleared(&self) -> bool {
         match self.level() {
-            2 => self.phase >= 2,
-            4 => self.phase == 3,
+            2 => self.phase() >= 2,
+            4 => self.phase() == 3,
             _ => false,
         }
     }
@@ -195,7 +204,7 @@ impl Navigator {
     }
 
     /// The info strip clip for this spot (location label).
-    fn info_clip(&self) -> Effect {
+    pub fn info_clip(&self) -> Effect {
         Effect::InfoClip {
             folder: Self::folder(self.level()),
             name: format!("{}.T.{}", self.node().id, self.facing.index()),
@@ -358,7 +367,7 @@ impl Navigator {
         fx
     }
 
-    /// Open or close the door ahead (Lingo's DoorAction, minus clearance).
+    /// Open or close the door ahead (Lingo's DoorAction).
     fn toggle_door(&mut self) -> Vec<Effect> {
         let Some(code) = self.door_ahead().map(str::to_string) else { return Vec::new() };
         let mut fx = Vec::new();
@@ -368,6 +377,11 @@ impl Navigator {
             if code == "00" || (damaged && !self.damage_cleared()) {
                 fx.push(Effect::Sound("SysBeeb".into()));
                 fx.push(Effect::InfoClip { folder: "Messages".into(), name: "LockedDoorsTxt".into() });
+                return fx;
+            }
+            if !self.access.grants(&code) {
+                fx.push(Effect::Sound("Access Denied".into()));
+                fx.push(Effect::InfoClip { folder: "Messages".into(), name: "AccessDeniedDNA.Mssg".into() });
                 return fx;
             }
             self.door_open = true;
@@ -421,14 +435,14 @@ mod tests {
 
     /// A made-up little ship (not game data):
     ///
-    /// line 2 `1.01` --N--> line 3 `1.02` (door "05" north of 1.02) --N--> line 4 `1.03`
+    /// line 2 `1.01` --N--> line 3 `1.02` (door "01" north of 1.02) --N--> line 4 `1.03`
     /// 1.02 has a ladder down (facing West) to line 6 `2.1.1.L`, which leads down to line 7 `2.01`.
     fn ship() -> NavGraph {
         let node = Table::parse(
             "** Node\n\
              1.01,1,0,0,0,0,0,#,#,#,#,\n\
-             1.02,1,0,-1,0,0,3.003.2.2,05,#,#,#,\n\
-             1.03,0,0,-1,0,0,0,#,#,05,#,\n\
+             1.02,1,0,-1,0,0,3.003.2.2,01,#,#,#,\n\
+             1.03,0,0,-1,0,0,0,#,#,01,#,\n\
              -- ladders --\n\
              2.1.1.L,0,0,0,0,0,2.001.2.2,#,#,#,#,\n\
              2.01,0,0,0,0,0,0,#,#,#,#,",
@@ -501,6 +515,21 @@ mod tests {
         let fx = n.act(NavAction::Door);
         assert_eq!(fx[0], Effect::Sound("SysBeeb".into()));
         assert_eq!(n.panel(), Panel::Door { open: false });
+    }
+
+    #[test]
+    fn doors_need_clearance() {
+        let node = Table::parse("** Node
+1.01,0,0,0,0,0,0,03,#,#,#,");
+        let empty = Table::parse("** x");
+        let mut n = Navigator::at(NavGraph::build(&node, &empty, &empty, &[]), 2, Direction::North);
+        *n.access_mut() = Access::new(vec![vec![1], vec![1, 7]]);
+        let fx = n.act(NavAction::Door);
+        assert_eq!(fx[0], Effect::Sound("Access Denied".into()));
+        assert_eq!(n.panel(), Panel::Door { open: false });
+        n.access_mut().kit_mut().push(7);
+        n.act(NavAction::Door);
+        assert_eq!(n.panel(), Panel::Door { open: true });
     }
 
     #[test]

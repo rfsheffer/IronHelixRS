@@ -47,6 +47,8 @@ pub mod cast {
     pub const MAP: u16 = 379;
     pub const PORTS: u16 = 380;
     pub const CMP: u16 = 381;
+    /// Clearance groups for codes 02-12, one text member each (F31).
+    pub const CLEARANCE: u16 = 337;
 }
 
 /// Everything loaded from the game's Director movie.
@@ -59,6 +61,8 @@ pub struct GameData {
     pub probe_failures: Vec<String>,
     /// Places the probe arm can't be used (`*`-separated node.direction list).
     pub no_arm: Vec<String>,
+    /// DNA ids granted each clearance code 02-12 (index 0 = code 02).
+    pub clearance: Vec<Vec<u8>>,
     /// The raw tables, for anything not modeled yet.
     pub tables: Tables,
 }
@@ -113,6 +117,7 @@ impl GameData {
             screens: computer::parse(&tables.cmp),
             probe_failures: list(by_name("ProbeFail")?, '/'),
             no_arm: list(by_name("NoArm")?, '*'),
+            clearance: (0..11).map(|i| by_cast(cast::CLEARANCE + i).map(|t| parse_group(&t))).collect::<Result<_>>()?,
             tables,
         })
     }
@@ -121,5 +126,19 @@ impl GameData {
     /// Returns the node ids added.
     pub fn add_pc_rooms(&mut self, helix_exe: &[u8]) -> Result<Vec<String>> {
         Ok(pc::add_hidden_rooms(&mut self.nav, &pc::PcShip::parse(helix_exe)?))
+    }
+}
+
+/// A clearance group's text: DNA ids between dots, ".01.02.10.".
+fn parse_group(text: &str) -> Vec<u8> {
+    text.split('.').filter_map(|id| id.trim().parse().ok()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn clearance_groups() {
+        assert_eq!(super::parse_group(".01.02.10."), [1, 2, 10]);
+        assert_eq!(super::parse_group(".01.02.03.04.05.07"), [1, 2, 3, 4, 5, 7]);
     }
 }

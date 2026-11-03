@@ -146,6 +146,21 @@ fn walk(g: GameData, files: &helixdb::GameFiles) -> Result<()> {
         println!("  missing {m}");
     }
     println!("{} info-strip clips requested, {} missing (the game skips those)", clips.len(), missing_clips);
+
+    // Every scan point's movies, in all five skill tables.
+    let mut scan_movies = BTreeSet::new();
+    for n in g.nav.nodes() {
+        for p in n.scan.iter().flatten().flatten() {
+            scan_movies.insert(("Scan", format!("{:02}.ScanEnhance", p.item)));
+            scan_movies.insert(("Scan", format!("{:02}.ScanAcquire", p.item)));
+            scan_movies.insert(("Scan/ScanText", format!("{:02}.ScanTxt", p.dna)));
+        }
+    }
+    let missing: Vec<_> = scan_movies.iter().filter(|(f, n)| !exists(f, n)).collect();
+    println!("{} scan movies and texts for the scan points, {} missing", scan_movies.len(), missing.len());
+    for (f, n) in missing.iter().take(30) {
+        println!("  missing {f}/{n}");
+    }
     Ok(())
 }
 

@@ -242,6 +242,37 @@ fn director_dump(rsrc_path: &Path, out: &Path) -> Result<()> {
     }
     fs::write(out.join("bitmaps.tsv"), table)?;
 
+    // Picture (PICT) members, and sound members as WAV.
+    let records = movie.cast_records()?;
+    let (mut pictures, mut sounds) = (0, 0);
+    for &cast in records.keys() {
+        let name = names.get(&cast).map(|n| safe_name(n)).unwrap_or_default();
+        let stem = if name.is_empty() { format!("{cast:04}") } else { format!("{cast:04} {name}") };
+        match movie.cast_type(cast)? {
+            Some(director::CastType::Picture) => match movie.picture(cast) {
+                Ok(Some(p)) => {
+                    let rgb: Vec<u8> = p.rgba.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect();
+                    fs::create_dir_all(out.join("pictures"))?;
+                    helix_tools::output::write_png(&out.join(format!("pictures/{stem}.png")), p.width, p.height, &helix_tools::output::Pixels::Rgb(&rgb))?;
+                    pictures += 1;
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("picture {cast}: {e}"),
+            },
+            Some(director::CastType::Sound) => match movie.sound(cast) {
+                Ok(Some(snd)) => {
+                    fs::create_dir_all(out.join("sounds"))?;
+                    helix_tools::output::write_wav_u8(&out.join(format!("sounds/{stem}.wav")), snd.rate, &snd.samples)?;
+                    sounds += 1;
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("sound {cast}: {e}"),
+            },
+            _ => {}
+        }
+    }
+    println!("{pictures} pictures, {sounds} sounds");
+
     // The score, frame by frame (only occupied channels).
     let labels_by_frame: std::collections::HashMap<u16, String> = labels.iter().map(|l| (l.frame, l.name.clone())).collect();
     let mut score = String::from("frame\tlabel\tframe_script\tchannel\tcast\tname\tloc_h\tloc_v\twidth\theight\tscript\tink\n");

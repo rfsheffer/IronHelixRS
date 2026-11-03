@@ -27,12 +27,14 @@ out/                 generated output (gitignored)
 
 You can explore the whole ship: the original interface (laid out from the Director score), the
 navigation buttons, movement movies and sounds, location strips, doors, ladders, elevators and
-the map in all three modes. The defender, scanning, DNA, the arm and the computers come next
-(see [docs/design.md](docs/design.md)).
+the map in all three modes. Scanning works (auto and manual, enhance and acquire), along with the
+DNA kit and probe controls, door clearance, the energy bar and the first phase change, whose
+movie plays on the bridge screen. The defender, the arm and the computers come next (see
+[docs/design.md](docs/design.md)).
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
-    [--pc-files <HELIX>]
+    [--pc-files <HELIX>] [--skill 1-5] [--seed N]
 ```
 
 Defaults are the `out/mac/...` folders the extraction steps below create (sounds come from the
@@ -47,15 +49,20 @@ until phases are played, **P** cycles the phase for testing. The PC shipped Germ
 strips for the stasis room in its English folder; the game rebuilds English ones from two
 English strips as they load.
 
-Controls: click or tap the arrows, the door/elevator panel and the map mode switch; or arrows
-move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor,
-M map mode. F pixel-perfect scaling, H debug overlay, Esc quit.
+Controls: click or tap the arrows, the function buttons (Scan, CTRL), the control screen's
+panels and the map mode switch; with the scanner on, click (auto scan) or drag (manual scan) in
+the view. Keys: arrows move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door,
+1-6 elevator floor; and, not in the original, S scan, C probe controls, M map mode. F
+pixel-perfect scaling, H debug overlay, Esc quit. The skill level (default 1) picks the scan
+table until the title screen exists.
 
-Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay FFROFRR2F` plays a
-sequence of moves (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
-P phase);
-`--screenshot <png>` saves the screen (after the autoplay, or after a few seconds) and exits;
-`--debug` starts with the overlay on.
+Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay "SK(400,60)A"` plays a
+sequence of steps (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
+P phase, S scan, C controls, K click the scan point, A acquire, G grant DNA 01/02/10 and skip
+to phase 2 like the original's debug keys, `(x,y)` a click at stage coordinates);
+`--screenshot <png>` saves the screen (after the autoplay, or after a few seconds; or at
+`--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--debug` starts with the
+overlay on (skill, energy, DNA kit, phase).
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
 screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain

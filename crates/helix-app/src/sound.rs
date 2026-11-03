@@ -1,4 +1,5 @@
-//! Playing the game's installed sounds (AIFF files).
+//! Playing the game's sounds: the installed AIFF files and the sound
+//! members inside the game program.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,6 +43,15 @@ pub fn aiff_to_wav(aiff: &[u8]) -> Option<Vec<u8>> {
         16 => samples.as_chunks::<2>().0.iter().flat_map(|c| [c[1], c[0]]).collect(),
         _ => return None,
     };
+    Some(wav(channels, bits, rate, &data))
+}
+
+/// 8-bit unsigned mono samples (a Director sound member) as a WAV file.
+pub fn pcm8_to_wav(rate: u32, samples: &[u8]) -> Vec<u8> {
+    wav(1, 8, rate, samples)
+}
+
+fn wav(channels: u16, bits: u16, rate: u32, data: &[u8]) -> Vec<u8> {
     let block = channels * bits / 8;
     let mut wav = Vec::with_capacity(44 + data.len());
     wav.extend_from_slice(b"RIFF");
@@ -56,8 +66,8 @@ pub fn aiff_to_wav(aiff: &[u8]) -> Option<Vec<u8>> {
     wav.extend_from_slice(&bits.to_le_bytes());
     wav.extend_from_slice(b"data");
     wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    wav.extend_from_slice(&data);
-    Some(wav)
+    wav.extend_from_slice(data);
+    wav
 }
 
 /// AIFF stores the sample rate as an 80-bit IEEE extended float.
@@ -68,22 +78,25 @@ fn extended_to_u32(b: &[u8]) -> u32 {
     value.round() as u32
 }
 
-/// The installed sounds, loaded on first use. Like the original, one sound
-/// plays at a time: starting a new one stops the last.
+/// The sounds, loaded on first use: an installed sound by that name, else a
+/// sound member (`cast`, name -> WAV). Like the original, one sound plays at
+/// a time: starting a new one stops the last.
 pub struct Sounds {
     folder: PathBuf,
+    cast: HashMap<String, Vec<u8>>,
     loaded: HashMap<String, Option<Sound>>,
     playing: Option<String>,
 }
 
 impl Sounds {
-    pub fn new(folder: PathBuf) -> Self {
-        Self { folder, loaded: HashMap::new(), playing: None }
+    pub fn new(folder: PathBuf, cast: HashMap<String, Vec<u8>>) -> Self {
+        Self { folder, cast, loaded: HashMap::new(), playing: None }
     }
 
     pub async fn play(&mut self, name: &str) {
         if !self.loaded.contains_key(name) {
-            let sound = match std::fs::read(self.folder.join(name)).ok().and_then(|a| aiff_to_wav(&a)) {
+            let installed = std::fs::read(self.folder.join(name)).ok().and_then(|a| aiff_to_wav(&a));
+            let sound = match installed.or_else(|| self.cast.get(name).cloned()) {
                 Some(wav) => load_sound_from_bytes(&wav).await.ok(),
                 None => None,
             };
