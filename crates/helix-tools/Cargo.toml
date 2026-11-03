@@ -21,6 +21,10 @@ path = "src/bin/isox.rs"
 name = "sfilm"
 path = "src/bin/sfilm.rs"
 
+[[bin]]
+name = "tomp4"
+path = "src/bin/tomp4.rs"
+
 [dependencies]
 paco.workspace = true
 macformats.workspace = true

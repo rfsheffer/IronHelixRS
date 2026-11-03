@@ -14,7 +14,7 @@ crates/paco          library: PACo (CAVF) movie parser, RLE decoder, frame compo
 crates/macformats    library: StuffIt 5 (+Arsenic), resource forks, DiskCopy NDIF (+ADC), HFS
 crates/cdimage       library: ISO9660 on raw (2352-byte) or cooked (2048-byte) CD images
 crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Sega CD PCM audio
-crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`)
+crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`)
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
 ```
@@ -61,6 +61,23 @@ target/release/sfilm check  out/sega/files
 ```
 
 `sfilm frames <movie> -o <dir>` writes one PNG per frame.
+
+## Making MP4s: `tomp4`
+
+`tomp4` converts a movie from any release (Windows or Mac PACo, or Sega CD FILM) to H.264/AAC
+MP4, detecting the format by content. It needs [ffmpeg](https://ffmpeg.org/), found via
+`--ffmpeg <path>`, then the `FFMPEG` environment variable, then `Tools/FFMPEG/bin` in or next to
+the current folder, then `PATH`.
+
+```
+target/release/tomp4 out/sega/files/SEGUES/ENDING.SEG -o out/ENDING.mp4
+target/release/tomp4 ../Reference/Game/Windows/HELIX -o out/mp4/windows     (a whole folder, in parallel)
+```
+
+Frames are upscaled 4× with nearest neighbor (`--scale` to change), so pixel art stays sharp.
+Sega CD movies are tagged with the Genesis 8:7 pixel aspect so players show them at their TV
+shape; PC and Mac pixels are square. Each frame keeps its own duration: a movie with a constant
+frame rate is encoded at that rate, anything uneven at 60 fps with frames repeated to match.
 
 ## Format findings
 

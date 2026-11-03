@@ -15,7 +15,7 @@ pub enum Pixels<'a> {
 }
 
 impl Pixels<'_> {
-    fn to_rgb(&self) -> Vec<u8> {
+    pub fn to_rgb(&self) -> Vec<u8> {
         match self {
             Pixels::Rgb(rgb) => rgb.to_vec(),
             Pixels::Indexed { data, palette } => data
@@ -144,4 +144,147 @@ pub fn mirrored(out: &Path, base: &Path, file: &Path, suffix: &str) -> Result<Pa
     let mut dest = out.join(file.strip_prefix(base)?).into_os_string();
     dest.push(suffix);
     Ok(PathBuf::from(dest))
+}
+
+/// Settings for [`write_mp4`].
+pub struct Mp4Options {
+    pub ffmpeg: PathBuf,
+    /// Integer upscale factor (nearest neighbor, so pixel art stays crisp).
+    pub scale: u32,
+    /// Shape of one source pixel, e.g. (1, 1) for square or (8, 7) for the
+    /// Genesis 256-pixel mode on a TV.
+    pub pixel_aspect: (u32, u32),
+}
+
+/// Find ffmpeg: an explicit path, then `$FFMPEG`, then `Tools/FFMPEG/bin`
+/// in or next to the current folder, then whatever `ffmpeg` is on PATH.
+pub fn find_ffmpeg(explicit: Option<&Path>) -> PathBuf {
+    if let Some(p) = explicit {
+        return p.to_path_buf();
+    }
+    if let Some(p) = std::env::var_os("FFMPEG") {
+        return PathBuf::from(p);
+    }
+    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    ["Tools/FFMPEG/bin", "../Tools/FFMPEG/bin", "../../Tools/FFMPEG/bin"]
+        .iter()
+        .map(|dir| Path::new(dir).join(exe))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+}
+
+/// Pick a constant frame rate for ffmpeg. If every frame lasts the same whole
+/// number of frames-per-second (8, 10, 12...), use that; otherwise use 60 fps
+/// and repeat frames to match each one's duration.
+fn choose_fps(durations: &[f64]) -> u32 {
+    let first = durations.first().copied().unwrap_or(0.0);
+    let fps = (1000.0 / first).round();
+    let uniform = first > 0.0
+        && (1.0..=60.0).contains(&fps)
+        && durations.iter().all(|&d| (d - 1000.0 / fps).abs() < 0.5);
+    if uniform { fps as u32 } else { 60 }
+}
+
+/// Encode frames (and optional unsigned 8-bit mono sound) to H.264/AAC MP4
+/// by piping raw RGB into ffmpeg.
+pub fn write_mp4(
+    path: &Path,
+    width: usize,
+    height: usize,
+    frames: &[AnimFrame],
+    sound: Option<(u32, &[u8])>,
+    opts: &Mp4Options,
+) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    anyhow::ensure!(!frames.is_empty(), "no frames to write");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Frames with no timing (some PACo movies) get 1/12 s.
+    let durations: Vec<f64> =
+        frames.iter().map(|f| if f.duration_ms > 0.0 { f.duration_ms } else { 1000.0 / 12.0 }).collect();
+    let fps = choose_fps(&durations);
+
+    // ffmpeg reads video from stdin, so the sound goes through a temp file.
+    let wav = match sound {
+        Some((rate, samples)) if !samples.is_empty() => {
+            let p = std::env::temp_dir().join(format!(
+                "helix-{}-{}.wav",
+                std::process::id(),
+                path.file_stem().and_then(|s| s.to_str()).unwrap_or("audio")
+            ));
+            write_wav_u8(&p, rate, samples)?;
+            Some(p)
+        }
+        _ => None,
+    };
+
+    let (num, den) = opts.pixel_aspect;
+    let filters = format!(
+        "scale=iw*{s}:ih*{s}:flags=neighbor,pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar={num}/{den},format=yuv420p",
+        s = opts.scale.max(1)
+    );
+    let mut cmd = Command::new(&opts.ffmpeg);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y"])
+        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{width}x{height}")])
+        .args(["-framerate", &fps.to_string(), "-i", "-"]);
+    if let Some(w) = &wav {
+        cmd.arg("-i").arg(w);
+    }
+    cmd.args(["-vf", &filters])
+        .args(["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-tune", "animation"]);
+    if wav.is_some() {
+        cmd.args(["-c:a", "aac", "-b:a", "128k", "-ar", "48000"]);
+    }
+    cmd.args(["-movflags", "+faststart"]).arg(path).stdin(Stdio::piped());
+
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "running {} (pass --ffmpeg <path> or set FFMPEG)",
+            opts.ffmpeg.display()
+        )
+    })?;
+    {
+        let mut stdin = BufWriter::new(child.stdin.take().context("ffmpeg stdin")?);
+        // Show each frame for its share of the timeline, rounding on the
+        // running total so long movies don't drift.
+        let (mut elapsed_ms, mut shown) = (0.0, 0u64);
+        for (f, d) in frames.iter().zip(&durations) {
+            elapsed_ms += d;
+            let until = (elapsed_ms * fps as f64 / 1000.0).round() as u64;
+            let rgb = f.pixels.to_rgb();
+            while shown < until {
+                stdin.write_all(&rgb)?;
+                shown += 1;
+            }
+        }
+        stdin.flush()?;
+    }
+    let status = child.wait()?;
+    if let Some(w) = wav {
+        let _ = fs::remove_file(w);
+    }
+    anyhow::ensure!(status.success(), "ffmpeg failed ({status}) writing {}", path.display());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choose_fps;
+
+    #[test]
+    fn uniform_frame_rates_are_kept() {
+        assert_eq!(choose_fps(&[125.0; 10]), 8); // PACo -8 delay
+        assert_eq!(choose_fps(&[1000.0 / 12.0; 5]), 12); // PACo 5 ticks
+        assert_eq!(choose_fps(&[100.0; 3]), 10); // Sega FILM 60/600
+    }
+
+    #[test]
+    fn uneven_timing_falls_back_to_60() {
+        assert_eq!(choose_fps(&[100.0, 100.0, 250.0]), 60);
+        assert_eq!(choose_fps(&[]), 60);
+    }
 }
