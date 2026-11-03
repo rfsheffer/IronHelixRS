@@ -84,6 +84,10 @@ score scripts, frame labels and cast names. **These are the game's own assets: t
 Check: the movement videos implied by the graph (`<node>.F<dir>`, `.B<dir>` unless a door is
 behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD.
 
+**[docs/design.md](docs/design.md)** describes how the whole game works (navigation, doors,
+DNA, scanning, the arm, computers, video clues, the defender's AI, deaths, energy, the clock and
+the win conditions), written from the Lingo in our own words as the spec for the Rust rebuild.
+
 ## The Sega CD version: `isox` and `sfilm`
 
 ```
