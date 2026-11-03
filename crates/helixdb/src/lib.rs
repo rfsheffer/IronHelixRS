@@ -8,17 +8,22 @@
 //! - [`defender`]: the defender's search tree and line of sight (Def table)
 //! - [`death`]: when the defender catches the probe (DeathDB table)
 //! - [`computer`]: the ship's computer screens (Cmp table)
+//! - [`files`]: finding movies across the Mac and PC releases
+//! - [`pc`]: the extra rooms in the PC release's tables
 //! - [`table`]: the line-preserving parser underneath them all
 
 pub mod computer;
 pub mod death;
 pub mod defender;
+pub mod files;
 pub mod nav;
+pub mod pc;
 pub mod table;
 
 use director::Movie;
 use thiserror::Error;
 
+pub use files::GameFiles;
 pub use nav::{Direction, Move, NavGraph, NavNode};
 pub use table::Table;
 
@@ -28,6 +33,8 @@ pub enum DataError {
     Missing(String),
     #[error(transparent)]
     Director(#[from] director::DirectorError),
+    #[error("PC release: {0}")]
+    Pc(String),
 }
 
 pub type Result<T> = std::result::Result<T, DataError>;
@@ -108,5 +115,11 @@ impl GameData {
             no_arm: list(by_name("NoArm")?, '*'),
             tables,
         })
+    }
+
+    /// Add the rooms only the PC release has, from its `HELIX.EXE`.
+    /// Returns the node ids added.
+    pub fn add_pc_rooms(&mut self, helix_exe: &[u8]) -> Result<Vec<String>> {
+        Ok(pc::add_hidden_rooms(&mut self.nav, &pc::PcShip::parse(helix_exe)?))
     }
 }

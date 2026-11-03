@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use director::Movie;
-use helixdb::GameData;
+use helixdb::{GameData, GameFiles};
 
 pub struct Paths {
     /// Resource fork of the Mac game program (`Iron Helix™.rsrc`).
@@ -18,6 +18,8 @@ pub struct Paths {
     pub mac_files: PathBuf,
     /// The installed `Iron Helix Sounds` folder (next to the game program).
     pub mac_sounds: PathBuf,
+    /// The PC CD's `HELIX` folder, for its hidden rooms (optional).
+    pub pc_files: Option<PathBuf>,
     /// Optional artwork for the space beside the stage.
     pub side_panel: PathBuf,
     /// Save a screenshot after a few seconds and quit (for checking layouts).
@@ -26,12 +28,13 @@ pub struct Paths {
 
 impl Paths {
     /// `--mac-app <file>`, `--mac-files <folder>`, `--mac-sounds <folder>`,
-    /// `--side-panel <png>`, `--screenshot <png>`.
+    /// `--pc-files <folder>`, `--side-panel <png>`, `--screenshot <png>`.
     pub fn from_args() -> Self {
         let mut p = Self {
             mac_app: PathBuf::from("out/mac/app/Iron Helix™/Iron Helix™.rsrc"),
             mac_files: PathBuf::from("out/mac/files/Iron Helix™ Files"),
             mac_sounds: PathBuf::new(),
+            pc_files: Some(PathBuf::from("../Reference/Game/Windows/HELIX")).filter(|p| p.is_dir()),
             side_panel: PathBuf::from("assets/side_panel.png"),
             screenshot: None,
         };
@@ -42,6 +45,7 @@ impl Paths {
                 "--mac-app" => p.mac_app = PathBuf::from(&pair[1]),
                 "--mac-files" => p.mac_files = PathBuf::from(&pair[1]),
                 "--mac-sounds" => sounds = Some(PathBuf::from(&pair[1])),
+                "--pc-files" => p.pc_files = Some(PathBuf::from(&pair[1])),
                 "--side-panel" => p.side_panel = PathBuf::from(&pair[1]),
                 "--screenshot" => p.screenshot = Some(PathBuf::from(&pair[1])),
                 _ => {}
@@ -60,8 +64,10 @@ pub struct GameAssets {
     pub stage_w: usize,
     pub stage_h: usize,
     pub palette: paco::Palette,
-    pub mac_files: PathBuf,
+    pub files: GameFiles,
     pub mac_sounds: PathBuf,
+    /// Nodes added from the PC release (empty without it).
+    pub pc_rooms: Vec<String>,
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
@@ -85,20 +91,27 @@ impl GameAssets {
         let movie = Movie::from_resource_fork(&fork).map_err(|e| e.to_string())?;
         let config = movie.config().map_err(|e| e.to_string())?;
         let (stage_w, stage_h) = config.stage_size();
-        let data = GameData::from_movie(&movie).map_err(|e| e.to_string())?;
+        let mut data = GameData::from_movie(&movie).map_err(|e| e.to_string())?;
+        let mut pc_rooms = Vec::new();
+        if let Some(pc) = &paths.pc_files {
+            let exe = read(&pc.join("HELIX.EXE"))?;
+            pc_rooms = data.add_pc_rooms(&exe).map_err(|e| e.to_string())?;
+        }
         Ok(Self {
             movie,
             data,
             stage_w,
             stage_h,
             palette: paco::Palette::mac_system(),
-            mac_files: paths.mac_files.clone(),
+            files: GameFiles::new(&paths.mac_files, paths.pc_files.as_deref()),
             mac_sounds: paths.mac_sounds.clone(),
+            pc_rooms,
         })
     }
 
-    /// Path of a file in the Mac CD's files, from a `/`-separated folder.
+    /// Path of a movie or clip by its Mac folder (`/`-separated) and name,
+    /// from whichever release has it.
     pub fn file(&self, folder: &str, name: &str) -> PathBuf {
-        folder.split('/').fold(self.mac_files.clone(), |p, part| p.join(part)).join(name)
+        self.files.find(folder, name).unwrap_or_else(|| self.files.mac_path(folder, name))
     }
 }

@@ -140,7 +140,8 @@ facing S ends facing E; forward from 2.15 facing N ends facing W).
 - Each node has an optional **door per facing** with a 2-digit **clearance code**.
 - When facing a door, the control screen shows the **door panel** (one open/close button;
   Enter/Return also works). Elevator nodes show the elevator panel instead (§4.4).
-- Code **`00`**: permanently locked: beep + "locked doors" message.
+- Code **`00`**: permanently locked: beep + "locked doors" message. (Definitive edition: two
+  of the Mac's `00` doors lead to PC-only rooms and open in later phases, §14.4.)
 - Opening requires clearance (§5.2). Success: video `<node>.O<facing>` + `Air Latch Open`.
   Failure: `Access Denied` sound + "access denied (DNA)" message.
 - Closing: video `<node>.C<facing>` + `Air Latch Close`.
@@ -546,6 +547,76 @@ menu click, arm stop/lock/motion/hotspot, scan blip, warning one/two, auto scan,
 | Arm dock radius | 30 px |
 | Defender max plan length | 40 steps |
 
+### 14.4 Definitive edition: content from the PC and Sega CD releases
+
+The Mac release stays the base: it alone has the Lingo, the tables and the interface art. The
+other two releases add content on top. They are optional: the game runs from the Mac files alone
+and turns each extra on when that release's files are found.
+
+**Navigation movies.** Every movie both releases share decodes to identical pixels (checked
+per movie for deck 2 with `paco digest`; the rest match by name). Names differ: the PC uses `_`
+for `.`, folders `L<deck><A-E>`, and 8.3 truncation (`3_03_E_C` = `3.03.E.CW`, `2_1_1LD` =
+`2.1.1.L.D`). The Mac alone has the `T.4` strips; the PC alone has the extra rooms below.
+Death clips (`<node>.<dir>.<n>`) differ in their hashes between the releases (not yet checked
+how). Resolution order for a movie: Mac, then PC under its mapped name.
+
+**Hidden rooms (PC only).** Two door pairs that are `00` on the Mac open on the PC, each into
+two extra nodes. The PC also ships their movies (`2_08_OS/CS/FS`, `2_42_*`, `2_43_*`,
+`4_05_ON/CN/FN`, `4_08_*`, `4_09_*`).
+
+| Node | Exits | Doors (code) | What it is |
+|---|---|---|---|
+| 2.08 | S → 2.42 | S (0x26) | the door with "Zero-Pressure / Possible Structural Damage" |
+| 2.42 | N → 2.08, S → 2.43 | N (06) | damaged corridor, grilles and wreckage |
+| 2.43 | N → 2.42 | none | dead end |
+| 4.05 | N → 4.08 | N (0x26) | |
+| 4.08 | E → 4.09, S → 4.05 | E (0x26), S (06) | stasis room |
+| 4.09 | W → 4.08 | none | a crew member frozen in a stasis pod |
+
+Overview map points (PC table + (293, 185), exact for every shared node): 2.42 (415, 206),
+2.43 (423, 206); 4.08 and 4.09 from the same table. Deck-map points are stored in the PC's own
+map-art coordinates (2.42 (139, 12), 2.43 (158, 12), 4.08 (62, 50), 4.09 (62, 35)); they need
+a per-deck fit against the shared nodes to land on the Mac maps. 2.42 N, 4.08 E/S and 4.09 S
+have computer ports (format not decoded yet). No death clips or scan points in these rooms.
+
+The PC's English location strips for 4.08 and 4.09 (`4_08_T_*`, `4_09_T_*`) are German
+("DECK 4 / ZUGANG BEGRENZT", "Zugang: Datenport"), a localization slip in the original; the
+deck 2 rooms' strips are English ("DECK 2/ Restricted Access", "Access: Data Port"). The
+English deck 4 text would be "DECK 4 / Restricted Access"; `helix-app` rebuilds it as the
+strips load, from 4.04's "DECK 4 /" and 2.42's English lines (`patches.rs`).
+
+**Phase-locked doors (PC rule).** Bit 0x20 of a PC door code (0x26 = group 6 + the flag) locks
+the door unless **deck 2 and phase ≥ 2**, or **deck 4 and phase = 3**. While locked it shows the
+`BATDAM` ("battle damage") message; the Mac equivalent is `Messages:LockedDoorsTxt`. Once
+unlocked the flag is dropped and group 6 applies as usual (§5.2), which phase > 1 grants anyway.
+Decoded by hand from `HELIX.EXE` segment 1 around 0xBE40; the two compared words are taken
+to be the current deck and the game phase, which fits these doors but isn't confirmed.
+
+**PC table format.** `HELIX.EXE` is a 16-bit Windows NE program (MSVC, not Director). Its data
+segment (segment 5, file offset 0x263C0) has one array of 64-byte node records per deck,
+(nodes + 1) records each, node *n* at index *n*, starting at DS offsets 0x1E06 (deck 0), 0x1E46,
+0x2446, 0x2F46, 0x30C6, 0x3346, 0x3786 (decks 1-6). Record fields:
+
+| Bytes | Field |
+|---|---|
+| 0-7 | exits N/E/S/W, i16 node numbers on this deck; 0 none, −1 blocked by a sealed door |
+| 8-11 | two u16 ladder/elevator values (not decoded) |
+| 12-15 | door type per facing: 0x02 door, 0x01 elevator door, 0x04 garbage chute, 0x22 sealed (`00`), 0xC4 ladder/shaft marker |
+| 32-35 | door clearance code per facing (u8; 0x20 = phase-locked flag) |
+| 36-43 | per facing, u16 pointer to port data (0xFFFF none) |
+| 44-47 | deck-map point (i16 x, y, PC map coordinates) |
+| 48-63 | per facing, two u16 pointers to death-clip data (0 none) |
+
+Node counts per deck are 23, 43, 5, 9, 16, 10. The overview points follow at DS 0x3A86, (x, y)
+i16 pairs per node with a (0, 0) entry between decks.
+
+**Sega CD.** The theme music is CD audio track 2 (44.1 kHz stereo), the same tune as the
+Mac's `Opening:Iron Helix™ Tune` (played by `Game.lingo` at startup and when returning to the
+title) and the PC's 11 kHz `RIH_TUNE.WAV`. It replaces both. The extended ending
+`SEGUES/ENDING.SEG` (98 s, the research vessel *Indiana*) plays after the normal win movie
+**when the game is won on the hardest skill (5)**, per the user's memory of the Sega release
+(not checked in the Sega code).
+
 ---
 
 ## 15. Open questions
@@ -563,8 +634,8 @@ menu click, arm stop/lock/motion/hotspot, scan blip, warning one/two, auto scan,
 ## 16. Implementation plan (Rust)
 
 Status: data (1) and navigation (§4: moves, turns, repeat moves, ladders, doors, the garbage
-chute, elevators, the science-lab bend) are done in `helix-core`, with the screen laid out from
-the score in `helix-app`. Clearance, the defender and everything after are next.
+chute, elevators, the science-lab bend, and the PC's hidden rooms with their phase-locked doors)
+are done in `helix-core`, with the screen laid out from the score in `helix-app`. Clearance, the defender and everything after are next.
 
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
 2. **Rules core** (no graphics): a deterministic `GameState` with the probe, defender, DNA kit,
@@ -575,3 +646,6 @@ the score in `helix-app`. Clearance, the defender and everything after are next.
 5. **Presentation**: window, view-window video playback (decoded PACo frames), control screen
    artwork from the Director cast (`BITD`/`CLUT` decoding still to do), map, input.
 6. **Asset mapping**: Mac names → PC/Sega files for the definitive edition; Sega exclusives.
+   Per §14.4: a movie resolver (Mac, then PC names); read the PC node records from the
+   player's `HELIX.EXE` and append the four hidden rooms to the graph; phase-locked doors; the
+   Sega theme from the disc image's audio track; `ENDING.SEG` after a skill-5 win.

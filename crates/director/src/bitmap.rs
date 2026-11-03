@@ -128,11 +128,13 @@ pub fn decode(cast: u16, info: BitmapInfo, data: &[u8]) -> Result<Bitmap> {
 
     // Raw if the size is exactly what's needed: padded rows for 1-bit,
     // unpadded for deeper bitmaps (as ScummVM decides for Director 3).
-    let raw = if bpp == 1 { data.len() == pitch * h } else { data.len() == unpadded };
-    let stored = if raw {
+    // Some 8-bit bitmaps are raw with padded rows too; an RLE stream can be
+    // that size by chance, so it wins only if it unpacks to exactly a frame.
+    let stored = if data.len() == if bpp == 1 { pitch * h } else { unpadded } {
         data.to_vec()
     } else {
-        unpack_rle(data, pitch * h)
+        let unpacked = unpack_rle(data, pitch * h);
+        if data.len() == pitch * h && unpacked.len() != pitch * h { data.to_vec() } else { unpacked }
     };
 
     let mut pixels = vec![0u8; w * h];
@@ -192,6 +194,15 @@ mod tests {
         let data = [0xFE, 1, 0x04, 0, 2, 3, 4, 0];
         let b = decode(1, info(3, 2, 8), &data).unwrap();
         assert_eq!(b.pixels, [1, 1, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn raw_with_padded_rows() {
+        // 3x2 8-bit, raw with rows padded to 4 bytes (unpacked as RLE this
+        // would run past the end).
+        let data = [0x7F, 0x7F, 0x7F, 0, 0x80, 0x81, 0x82, 0];
+        let b = decode(1, info(3, 2, 8), &data).unwrap();
+        assert_eq!(b.pixels, [0x7F, 0x7F, 0x7F, 0x80, 0x81, 0x82]);
     }
 
     #[test]

@@ -163,6 +163,16 @@ impl GameScreen {
     /// Keyboard controls (design doc §4.8).
     pub fn key(&mut self, key: macroquad::input::KeyCode) {
         use macroquad::input::KeyCode::*;
+        if key == M {
+            // Not in the original: cycles the map mode button.
+            self.map_mode = self.map_mode % 3 + 1;
+            return;
+        }
+        if key == P {
+            // Testing aid until phases are played: cycles the game phase.
+            self.nav.set_phase(self.nav.phase() % 4 + 1);
+            return;
+        }
         let action = match key {
             Up => NavAction::Forward,
             Down => NavAction::Back,
@@ -226,7 +236,7 @@ impl GameScreen {
                     }
                 }
                 Effect::InfoClip { folder, name } => {
-                    if let Ok(clip) = Clip::load(&assets.file(&folder, &name)) {
+                    if let Ok(clip) = crate::patches::info_clip(assets, &folder, &name) {
                         self.info = Some(Player::new(clip));
                     }
                 }

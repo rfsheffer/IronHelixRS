@@ -3,15 +3,19 @@
 //! So far: the interface laid out from the original score, scaled to fit
 //! any screen with decorative side panels, and navigation through the whole
 //! ship (helix-core): movies, location strips, doors, ladders, elevators,
-//! the map and sounds.
+//! the map and sounds, plus the PC release's hidden rooms when its files
+//! are given.
 //!
 //! Desktop: `ironhelix [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
-//! [--mac-sounds <Iron Helix Sounds>] [--side-panel <png>] [--window WxH] [--screenshot <png>]`.
+//! [--mac-sounds <Iron Helix Sounds>] [--pc-files <HELIX>] [--side-panel <png>] [--window WxH]
+//! [--screenshot <png>]`.
 //! Keys: arrows move/turn, U/D ladders, Tab repeat moves, Enter door, 1-6
-//! elevator, F pixel-perfect scaling, H debug overlay, Esc quit.
+//! elevator, M map mode, P game phase (testing), F pixel-perfect scaling,
+//! H debug overlay, Esc quit.
 
 mod assets;
 mod layout;
+mod patches;
 mod screen;
 mod sound;
 mod sprites;
@@ -26,7 +30,7 @@ use sprites::Canvas;
 const PANEL_COLOR: Color = Color::new(0.10, 0.10, 0.11, 1.0);
 
 /// Keys passed on to the game screen.
-const GAME_KEYS: [KeyCode; 17] = [
+const GAME_KEYS: [KeyCode; 19] = [
     KeyCode::Up,
     KeyCode::Down,
     KeyCode::Left,
@@ -44,6 +48,8 @@ const GAME_KEYS: [KeyCode; 17] = [
     KeyCode::Key6,
     KeyCode::Key7,
     KeyCode::Space,
+    KeyCode::M,
+    KeyCode::P,
 ];
 
 fn window_conf() -> Conf {
@@ -147,7 +153,7 @@ async fn main() {
     let mut show_debug = std::env::args().any(|a| a == "--debug");
     let mut frames_drawn = 0u32;
     // `--autoplay FFLRO2`: moves fed in one at a time (F/B forward/back,
-    // L/R turn, U/D ladder, O door, 1-6 elevator), for testing.
+    // L/R turn, U/D ladder, O door, 1-6 elevator, M map mode, P phase), for testing.
     let args: Vec<String> = std::env::args().collect();
     let mut autoplay: std::collections::VecDeque<KeyCode> = args
         .windows(2)
@@ -162,6 +168,8 @@ async fn main() {
                     'U' => Some(KeyCode::U),
                     'D' => Some(KeyCode::D),
                     'O' => Some(KeyCode::Enter),
+                    'M' => Some(KeyCode::M),
+                    'P' => Some(KeyCode::P),
                     '1' => Some(KeyCode::Key1),
                     '2' => Some(KeyCode::Key2),
                     '3' => Some(KeyCode::Key3),
@@ -235,10 +243,11 @@ async fn main() {
         if show_debug {
             let nav = game.navigator();
             let lines = [
-                format!("node {} (line {}) facing {} {}", nav.node().id, nav.line(), game.facing(), if nav.in_ladder() { "in ladder" } else { "" }),
+                format!("node {} (line {}) facing {} {}  phase {}", nav.node().id, nav.line(), game.facing(), if nav.in_ladder() { "in ladder" } else { "" }, nav.phase()),
+                format!("PC rooms: {}", if assets.pc_rooms.is_empty() { "none (no PC files)".to_owned() } else { assets.pc_rooms.join(", ") }),
                 format!("last movie {}", game.status),
                 format!("stage {}x{} at {:.2}x{}", assets.stage_w, assets.stage_h, layout.scale, if pixel_perfect { " (pixel perfect)" } else { "" }),
-                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  F pixel-perfect  H hide  Esc quit".to_owned(),
+                "arrows move/turn  U/D ladders  Tab repeat  Enter door  1-6 elevator  M map  P phase  F pixel-perfect  H hide  Esc quit".to_owned(),
             ];
             for (i, line) in lines.iter().enumerate() {
                 draw_text(line, 8.0, 18.0 + i as f32 * 18.0, 18.0, YELLOW);

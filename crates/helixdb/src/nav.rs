@@ -178,6 +178,9 @@ pub struct NavNode {
     pub up: Option<Ladder>,
     pub down: Option<Ladder>,
     pub doors: [Option<String>; 4],
+    /// Doors locked by battle damage until a later phase (from the PC
+    /// release's tables; see [`crate::pc`]).
+    pub damaged: [bool; 4],
     /// Elevator nodes: line offsets to the elevator one level up / down.
     pub elevator_up: Option<i32>,
     pub elevator_down: Option<i32>,
@@ -277,6 +280,7 @@ impl NavGraph {
                     up: item(f, 6).and_then(Ladder::parse),
                     down: item(f, 7).and_then(Ladder::parse),
                     doors,
+                    damaged: [false; 4],
                     elevator_up: item(f, 12).and_then(|s| s.trim().parse().ok()).filter(|&o| o != 0),
                     elevator_down: item(f, 13).and_then(|s| s.trim().parse().ok()).filter(|&o| o != 0),
                     map: map_coords,
@@ -306,6 +310,14 @@ impl NavGraph {
 
     pub fn find(&self, id: &str) -> Option<&NavNode> {
         self.nodes.values().find(|n| n.id == id)
+    }
+
+    pub fn node_mut(&mut self, line: usize) -> Option<&mut NavNode> {
+        self.nodes.get_mut(&line)
+    }
+
+    pub fn insert(&mut self, node: NavNode) {
+        self.nodes.insert(node.line, node);
     }
 
     /// The node reached by applying a line offset.

@@ -4,7 +4,8 @@
 //! Moves play a movie and step the line by the exit's offset; turns play a
 //! movie and change the facing; ladders and elevators change level. Doors
 //! open and close in place. Clearance (DNA) and the defender come later; for
-//! now every door except the permanently locked ones opens.
+//! now every door opens except the permanently locked ones and, before their
+//! phase, the battle-damaged doors to the PC release's hidden rooms.
 
 use helixdb::Direction;
 use helixdb::nav::{Ladder, NavGraph, NavNode};
@@ -66,6 +67,8 @@ pub struct Navigator {
     door_open: bool,
     repeat: bool,
     chute_open: bool,
+    /// Game phase (1-4, design doc §1); battle-damaged doors depend on it.
+    phase: u8,
 }
 
 /// The kind of move a button makes (forward/back/up/down).
@@ -92,7 +95,7 @@ impl Navigator {
     }
 
     pub fn at(graph: NavGraph, line: usize, facing: Direction) -> Self {
-        Self { graph, line, facing, in_ladder: false, door_open: false, repeat: false, chute_open: false }
+        Self { graph, line, facing, in_ladder: false, door_open: false, repeat: false, chute_open: false, phase: 1 }
     }
 
     pub fn graph(&self) -> &NavGraph {
@@ -123,10 +126,28 @@ impl Navigator {
         self.node().level()
     }
 
+    pub fn phase(&self) -> u8 {
+        self.phase
+    }
+
+    pub fn set_phase(&mut self, phase: u8) {
+        self.phase = phase.clamp(1, 4);
+    }
+
     /// Everything that tells one navigation state from another (for
     /// exhaustively exploring the ship in tests and tools).
-    pub fn state_key(&self) -> (usize, Direction, bool, bool, bool) {
-        (self.line, self.facing, self.in_ladder, self.door_open, self.chute_open)
+    pub fn state_key(&self) -> (usize, Direction, bool, bool, bool, u8) {
+        (self.line, self.facing, self.in_ladder, self.door_open, self.chute_open, self.phase)
+    }
+
+    /// A battle-damaged door (PC release) opens on deck 2 from phase 2 and on
+    /// deck 4 in phase 3 only, as `HELIX.EXE` checks it (design doc §14.4).
+    fn damage_cleared(&self) -> bool {
+        match self.level() {
+            2 => self.phase >= 2,
+            4 => self.phase == 3,
+            _ => false,
+        }
     }
 
     fn door_ahead(&self) -> Option<&str> {
@@ -343,7 +364,8 @@ impl Navigator {
         let mut fx = Vec::new();
         let is_chute = self.node().id == CHUTE_NODE && self.facing == Direction::West;
         let (movie, sound) = if !self.door_open {
-            if code == "00" {
+            let damaged = self.node().damaged[self.facing.index()];
+            if code == "00" || (damaged && !self.damage_cleared()) {
                 fx.push(Effect::Sound("SysBeeb".into()));
                 fx.push(Effect::InfoClip { folder: "Messages".into(), name: "LockedDoorsTxt".into() });
                 return fx;
@@ -479,5 +501,25 @@ mod tests {
         let fx = n.act(NavAction::Door);
         assert_eq!(fx[0], Effect::Sound("SysBeeb".into()));
         assert_eq!(n.panel(), Panel::Door { open: false });
+    }
+
+    #[test]
+    fn damaged_doors_wait_for_their_phase() {
+        let node = Table::parse("** Node
+2.01,0,0,0,0,0,0,06,#,#,#,
+4.01,0,0,0,0,0,0,06,#,#,#,");
+        let empty = Table::parse("** x");
+        let mut g = NavGraph::build(&node, &empty, &empty, &[]);
+        for line in [2, 3] {
+            g.node_mut(line).unwrap().damaged[0] = true;
+        }
+        let opens = |line: usize, phase: u8| {
+            let mut n = Navigator::at(g.clone(), line, Direction::North);
+            n.set_phase(phase);
+            n.act(NavAction::Door);
+            n.panel() == Panel::Door { open: true }
+        };
+        assert_eq!([1, 2, 3, 4].map(|p| opens(2, p)), [false, true, true, true]);
+        assert_eq!([1, 2, 3, 4].map(|p| opens(3, p)), [false, false, true, false]);
     }
 }

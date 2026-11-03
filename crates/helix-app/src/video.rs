@@ -11,20 +11,26 @@ pub struct Clip {
     pub frames: Vec<(Vec<u8>, f32)>,
 }
 
+/// Decode a movie's frames (palette indices).
+pub fn decode(path: &Path) -> Result<Vec<paco::Frame>, String> {
+    let data = std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+    let movie = paco::Movie::parse(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+    paco::Decoder::new(&movie, Default::default()).decode_all().map_err(|e| format!("{}: {e}", path.display()))
+}
+
 impl Clip {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let data = std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
-        let movie = paco::Movie::parse(&data).map_err(|e| format!("{}: {e}", path.display()))?;
-        let frames = paco::Decoder::new(&movie, Default::default())
-            .decode_all()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(Self {
-            width: movie.width(),
+        Ok(Self::from_frames(&decode(path)?))
+    }
+
+    pub fn from_frames(frames: &[paco::Frame]) -> Self {
+        Self {
+            width: frames.first().map_or(0, |f| f.width),
             frames: frames
                 .iter()
                 .map(|f| (indexed_to_rgba(&f.pixels, &f.palette), (f.duration_ms / 1000.0) as f32))
                 .collect(),
-        })
+        }
     }
 }
 

@@ -48,6 +48,9 @@ enum Command {
         /// The "Iron Helix™ Files" folder from the Mac CD.
         #[arg(long)]
         files: PathBuf,
+        /// The PC CD's HELIX folder: adds its hidden rooms and movies.
+        #[arg(long)]
+        pc: Option<PathBuf>,
     },
 }
 
@@ -62,11 +65,19 @@ fn main() -> Result<()> {
         Command::Summary { app } => summary(&load(&app)?),
         Command::Nodes { app, level } => nodes(&load(&app)?, level),
         Command::Videos { app, nav } => videos(&load(&app)?, &nav),
-        Command::Walk { app, files } => walk(load(&app)?, &files),
+        Command::Walk { app, files, pc } => {
+            let mut g = load(&app)?;
+            if let Some(pc) = &pc {
+                let exe = pc.join("HELIX.EXE");
+                let added = g.add_pc_rooms(&fs::read(&exe).with_context(|| format!("reading {}", exe.display()))?)?;
+                println!("PC release: added {}", added.join(", "));
+            }
+            walk(g, &helixdb::GameFiles::new(files, pc.as_deref()))
+        }
     }
 }
 
-fn walk(g: GameData, files: &Path) -> Result<()> {
+fn walk(g: GameData, files: &helixdb::GameFiles) -> Result<()> {
     use helix_core::{Effect, NavAction, Navigator};
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -79,14 +90,21 @@ fn walk(g: GameData, files: &Path) -> Result<()> {
         NavAction::Down,
         NavAction::Door,
     ];
-    let start = Navigator::new(g.nav);
-    let mut seen = BTreeSet::from([start.state_key()]);
-    let mut queue = VecDeque::from([start]);
+    // Every game phase, since some doors open only in later ones.
+    let starts: Vec<Navigator> = (1..=4)
+        .map(|phase| {
+            let mut n = Navigator::new(g.nav.clone());
+            n.set_phase(phase);
+            n
+        })
+        .collect();
+    let mut seen: BTreeSet<_> = starts.iter().map(Navigator::state_key).collect();
+    let mut queue = VecDeque::from(starts);
     let mut nodes = BTreeSet::new();
     let mut movies: BTreeMap<String, bool> = BTreeMap::new();
     let mut clips: BTreeMap<String, bool> = BTreeMap::new();
 
-    let exists = |folder: &str, name: &str| folder.split('/').fold(files.to_path_buf(), |p, f| p.join(f)).join(name).is_file();
+    let exists = |folder: &str, name: &str| files.find(folder, name).is_some();
 
     while let Some(nav) = queue.pop_front() {
         nodes.insert(nav.node().id.clone());
@@ -122,7 +140,7 @@ fn walk(g: GameData, files: &Path) -> Result<()> {
 
     let missing: Vec<_> = movies.iter().filter(|(_, ok)| !**ok).map(|(m, _)| m).collect();
     let missing_clips = clips.values().filter(|ok| !**ok).count();
-    println!("{} states explored, {} of {} nodes reached", seen.len(), nodes.len(), g.tables.node.rows().count());
+    println!("{} states explored, {} of {} nodes reached", seen.len(), nodes.len(), g.nav.len());
     println!("{} distinct movies requested, {} missing", movies.len(), missing.len());
     for m in missing.iter().take(30) {
         println!("  missing {m}");

@@ -32,17 +32,28 @@ the map in all three modes. The defender, scanning, DNA, the arm and the compute
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
+    [--pc-files <HELIX>]
 ```
 
 Defaults are the `out/mac/...` folders the extraction steps below create (sounds come from the
 `Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`).
 
+With the PC CD's `HELIX` folder (`--pc-files`, default `../Reference/Game/Windows/HELIX` when it
+exists) the game adds the **PC release's hidden rooms**: 2.42/2.43 behind the "Zero-Pressure"
+door at 2.08 south, and the stasis room 4.08/4.09 behind 4.05 north. Their node data is read
+from the player's `HELIX.EXE` and their movies from the PC CD. As on the PC, those
+battle-damaged doors open on deck 2 from phase 2 and on deck 4 in phase 3 (design doc §14.4);
+until phases are played, **P** cycles the phase for testing. The PC shipped German location
+strips for the stasis room in its English folder; the game rebuilds English ones from two
+English strips as they load.
+
 Controls: click or tap the arrows, the door/elevator panel and the map mode switch; or arrows
-move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor.
-F pixel-perfect scaling, H debug overlay, Esc quit.
+move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor,
+M map mode. F pixel-perfect scaling, H debug overlay, Esc quit.
 
 Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay FFROFRR2F` plays a
-sequence of moves (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator);
+sequence of moves (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
+P phase);
 `--screenshot <png>` saves the screen (after the autoplay, or after a few seconds) and exits;
 `--debug` starts with the overlay on.
 
@@ -127,8 +138,9 @@ next byte repeats 257−n times), and all use the Mac system palette; the format
 Check: the movement videos implied by the graph (`<node>.F<dir>`, `.B<dir>` unless a door is
 behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD. `helixdb walk <app> --files
 <Iron Helix™ Files>` goes further: it explores every state reachable through the actual rules
-(helix-core) and checks every movie and clip they request: 479 states, all 110 nodes, 1,276
-movies, none missing.
+(helix-core) and checks every movie and clip they request, in every game phase: all 110
+nodes, 1,276 movies, none missing. With `--pc <HELIX>` it adds the PC's hidden rooms and looks
+up movies on both CDs: all 114 nodes, 1,329 movies, none missing.
 
 The **score** (`VWSC`) gives the screen layout: a u32 size, then frames of (u8 length, u8
 offset) word patches to a 512-byte buffer that carries over between frames: 32 bytes of main
