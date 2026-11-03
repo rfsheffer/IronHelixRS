@@ -16,6 +16,8 @@
 //!             (D = facing that can climb, OOO = line offset, F = facing
 //!             after the climb, L = destination level)
 //! items 8-11  door when facing N, E, S, W ("#" = none)
+//! items 12-13 elevator nodes ("<level>.<n>.E"): line offset to the elevator
+//!             node one level up / down
 //! ```
 //!
 //! Map row: item 1 node id, then pairs of map coordinates; the game picks a
@@ -176,6 +178,9 @@ pub struct NavNode {
     pub up: Option<Ladder>,
     pub down: Option<Ladder>,
     pub doors: [Option<String>; 4],
+    /// Elevator nodes: line offsets to the elevator one level up / down.
+    pub elevator_up: Option<i32>,
+    pub elevator_down: Option<i32>,
     /// Map coordinates as stored (item 2 onward); `None` for `#`.
     pub map: Vec<Option<i32>>,
     /// Arm target per facing.
@@ -191,6 +196,11 @@ impl NavNode {
 
     pub fn is_ladder(&self) -> bool {
         self.id.contains('L')
+    }
+
+    /// Elevator nodes end in ".E" and share one set of turn videos (node "0").
+    pub fn is_elevator(&self) -> bool {
+        self.id.contains('E')
     }
 
     pub fn exit(&self, facing: Direction) -> Option<Exit> {
@@ -267,6 +277,8 @@ impl NavGraph {
                     up: item(f, 6).and_then(Ladder::parse),
                     down: item(f, 7).and_then(Ladder::parse),
                     doors,
+                    elevator_up: item(f, 12).and_then(|s| s.trim().parse().ok()).filter(|&o| o != 0),
+                    elevator_down: item(f, 13).and_then(|s| s.trim().parse().ok()).filter(|&o| o != 0),
                     map: map_coords,
                     ports,
                     scan,

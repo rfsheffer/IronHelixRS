@@ -17,6 +17,7 @@ crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Seg
 crates/director      library: Director 3 movies in resource forks (cast, text members, score scripts, labels)
 crates/helixdb       library: the game's data tables (navigation graph, defender, deaths, computers)
 crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
+crates/helix-core    the game rules, no graphics or audio (navigation so far)
 crates/helix-app     the game itself (`ironhelix`), built on macroquad for desktop and mobile
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
@@ -24,16 +25,26 @@ out/                 generated output (gitignored)
 
 ## Running the game: `ironhelix`
 
-Early days: it shows the interface and plays navigation movies in the view window; the rules
-from [docs/design.md](docs/design.md) come next.
+You can explore the whole ship: the original interface (laid out from the Director score), the
+navigation buttons, movement movies and sounds, location strips, doors, ladders, elevators and
+the map in all three modes. The defender, scanning, DNA, the arm and the computers come next
+(see [docs/design.md](docs/design.md)).
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
 ```
 
-Defaults are the `out/mac/...` folders the extraction steps below create. Keys: N next movie,
-F pixel-perfect scaling, H debug overlay, Esc quit. `--window 2400x1080` tries other screen
-shapes; `--screenshot <png>` saves the screen after a few seconds and exits.
+Defaults are the `out/mac/...` folders the extraction steps below create (sounds come from the
+`Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`).
+
+Controls: click or tap the arrows, the door/elevator panel and the map mode switch; or arrows
+move and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor.
+F pixel-perfect scaling, H debug overlay, Esc quit.
+
+Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay FFROFRR2F` plays a
+sequence of moves (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator);
+`--screenshot <png>` saves the screen (after the autoplay, or after a few seconds) and exits;
+`--debug` starts with the overlay on.
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
 screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain
@@ -114,7 +125,16 @@ next byte repeats 257−n times), and all use the Mac system palette; the format
 - **Deaths** (DeathDB), **computer screens** (Cmp), probe-failure spots and no-arm spots.
 
 Check: the movement videos implied by the graph (`<node>.F<dir>`, `.B<dir>` unless a door is
-behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD.
+behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD. `helixdb walk <app> --files
+<Iron Helix™ Files>` goes further: it explores every state reachable through the actual rules
+(helix-core) and checks every movie and clip they request: 479 states, all 110 nodes, 1,276
+movies, none missing.
+
+The **score** (`VWSC`) gives the screen layout: a u32 size, then frames of (u8 length, u8
+offset) word patches to a 512-byte buffer that carries over between frames: 32 bytes of main
+channels and 30 sprite channels of 16 bytes (script, type, colors, ink, cast member, loc v/h,
+height/width). A sprite's loc is where its bitmap's registration point goes. `macx director`
+writes it out as `score.tsv`.
 
 **[docs/design.md](docs/design.md)** describes how the whole game works (navigation, doors,
 DNA, scanning, the arm, computers, video clues, the defender's AI, deaths, energy, the clock and

@@ -17,6 +17,7 @@
 //! interpreted Lingo from source text, so scripts are stored as plain text.
 
 pub mod bitmap;
+pub mod score;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -380,6 +381,16 @@ impl Movie {
             }
         }
         Ok(out)
+    }
+
+    /// The score: what's on stage in each frame (frame 1 at index 0).
+    pub fn score(&self) -> Result<Vec<score::Frame>> {
+        score::parse(self.resource(b"VWSC", CAST_ID_BASE).ok_or(DirectorError::Missing("VWSC"))?)
+    }
+
+    /// The frame number of a label (e.g. "Game").
+    pub fn label_frame(&self, name: &str) -> Result<Option<u16>> {
+        Ok(self.labels()?.into_iter().find(|l| l.name == name).map(|l| l.frame))
     }
 
     /// Find a member by name.

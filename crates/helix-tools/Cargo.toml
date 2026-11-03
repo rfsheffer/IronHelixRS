@@ -35,6 +35,7 @@ path = "src/bin/helixdb.rs"
 
 [dependencies]
 helixdb.workspace = true
+helix-core.workspace = true
 paco.workspace = true
 macformats.workspace = true
 cdimage.workspace = true

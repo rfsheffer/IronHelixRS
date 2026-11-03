@@ -241,6 +241,30 @@ fn director_dump(rsrc_path: &Path, out: &Path) -> Result<()> {
         ));
     }
     fs::write(out.join("bitmaps.tsv"), table)?;
+
+    // The score, frame by frame (only occupied channels).
+    let labels_by_frame: std::collections::HashMap<u16, String> = labels.iter().map(|l| (l.frame, l.name.clone())).collect();
+    let mut score = String::from("frame\tlabel\tframe_script\tchannel\tcast\tname\tloc_h\tloc_v\twidth\theight\tscript\tink\n");
+    for (i, f) in movie.score()?.iter().enumerate() {
+        let n = i as u16 + 1;
+        for (ch, s) in f.sprites.iter().enumerate().filter(|(_, s)| !s.is_empty()) {
+            score.push_str(&format!(
+                "{n}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                labels_by_frame.get(&n).map(String::as_str).unwrap_or(""),
+                f.script,
+                ch + 1,
+                s.cast,
+                names.get(&s.cast).map(String::as_str).unwrap_or(""),
+                s.loc_h,
+                s.loc_v,
+                s.width,
+                s.height,
+                s.script,
+                s.ink
+            ));
+        }
+    }
+    fs::write(out.join("score.tsv"), score)?;
     let config = movie.config()?;
     println!(
         "Director version {:#x}, stage {}x{}, {} bitmaps",

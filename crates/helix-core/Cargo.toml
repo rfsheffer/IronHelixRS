@@ -1,0 +1,9 @@
+[package]
+name = "helix-core"
+description = "Iron Helix game rules, independent of graphics and audio"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+helixdb.workspace = true

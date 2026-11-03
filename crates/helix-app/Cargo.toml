@@ -11,5 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 director.workspace = true
+helixdb.workspace = true
+helix-core.workspace = true
 paco.workspace = true
-macroquad = "0.4"
+macroquad = { version = "0.4", features = ["audio"] }

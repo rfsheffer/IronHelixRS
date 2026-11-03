@@ -562,6 +562,10 @@ menu click, arm stop/lock/motion/hotspot, scan blip, warning one/two, auto scan,
 
 ## 16. Implementation plan (Rust)
 
+Status: data (1) and navigation (§4: moves, turns, repeat moves, ladders, doors, the garbage
+chute, elevators, the science-lab bend) are done in `helix-core`, with the screen laid out from
+the score in `helix-app`. Clearance, the defender and everything after are next.
+
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
 2. **Rules core** (no graphics): a deterministic `GameState` with the probe, defender, DNA kit,
    phase, clock and energy; `apply(Action) -> Vec<Effect>` where effects are "play video X",

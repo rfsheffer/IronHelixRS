@@ -41,6 +41,14 @@ enum Command {
         #[arg(long)]
         nav: PathBuf,
     },
+    /// Explore every navigation state reachable from the start through the
+    /// game rules (helix-core) and check every movie and clip they ask for.
+    Walk {
+        app: PathBuf,
+        /// The "Iron Helix™ Files" folder from the Mac CD.
+        #[arg(long)]
+        files: PathBuf,
+    },
 }
 
 fn load(app: &Path) -> Result<GameData> {
@@ -54,7 +62,73 @@ fn main() -> Result<()> {
         Command::Summary { app } => summary(&load(&app)?),
         Command::Nodes { app, level } => nodes(&load(&app)?, level),
         Command::Videos { app, nav } => videos(&load(&app)?, &nav),
+        Command::Walk { app, files } => walk(load(&app)?, &files),
     }
+}
+
+fn walk(g: GameData, files: &Path) -> Result<()> {
+    use helix_core::{Effect, NavAction, Navigator};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+    let actions = [
+        NavAction::Forward,
+        NavAction::Back,
+        NavAction::TurnLeft,
+        NavAction::TurnRight,
+        NavAction::Up,
+        NavAction::Down,
+        NavAction::Door,
+    ];
+    let start = Navigator::new(g.nav);
+    let mut seen = BTreeSet::from([start.state_key()]);
+    let mut queue = VecDeque::from([start]);
+    let mut nodes = BTreeSet::new();
+    let mut movies: BTreeMap<String, bool> = BTreeMap::new();
+    let mut clips: BTreeMap<String, bool> = BTreeMap::new();
+
+    let exists = |folder: &str, name: &str| folder.split('/').fold(files.to_path_buf(), |p, f| p.join(f)).join(name).is_file();
+
+    while let Some(nav) = queue.pop_front() {
+        nodes.insert(nav.node().id.clone());
+        let mut tries: Vec<NavAction> = actions.to_vec();
+        if nav.node().is_elevator() {
+            tries.extend((1..=6).map(NavAction::Elevator));
+        }
+        for repeat in [false, true] {
+            for &a in &tries {
+                let mut next = nav.clone();
+                if repeat {
+                    next.act(NavAction::ToggleRepeat);
+                }
+                for e in next.act(a) {
+                    match e {
+                        Effect::Video { folder, name, .. } => {
+                            let ok = exists(&folder, &name);
+                            movies.insert(format!("{folder}/{name}"), ok);
+                        }
+                        Effect::InfoClip { folder, name } => {
+                            let ok = exists(&folder, &name);
+                            clips.insert(format!("{folder}/{name}"), ok);
+                        }
+                        _ => {}
+                    }
+                }
+                if seen.insert(next.state_key()) {
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+
+    let missing: Vec<_> = movies.iter().filter(|(_, ok)| !**ok).map(|(m, _)| m).collect();
+    let missing_clips = clips.values().filter(|ok| !**ok).count();
+    println!("{} states explored, {} of {} nodes reached", seen.len(), nodes.len(), g.tables.node.rows().count());
+    println!("{} distinct movies requested, {} missing", movies.len(), missing.len());
+    for m in missing.iter().take(30) {
+        println!("  missing {m}");
+    }
+    println!("{} info-strip clips requested, {} missing (the game skips those)", clips.len(), missing_clips);
+    Ok(())
 }
 
 fn summary(g: &GameData) -> Result<()> {

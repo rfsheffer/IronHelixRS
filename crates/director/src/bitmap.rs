@@ -69,6 +69,12 @@ impl BitmapInfo {
         Ok(Self { rect, reg_h, reg_v, bits_per_pixel, palette })
     }
 
+    /// Where the registration point is within the bitmap (from its top-left).
+    /// A sprite at loc (h, v) draws the bitmap's top-left at loc minus this.
+    pub fn reg_offset(&self) -> (i32, i32) {
+        ((self.reg_h - self.rect.left) as i32, (self.reg_v - self.rect.top) as i32)
+    }
+
     /// Bytes per row as stored.
     pub fn pitch(&self) -> usize {
         let mut pixels = self.rect.width();

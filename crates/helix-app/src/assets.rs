@@ -9,12 +9,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use director::Movie;
+use helixdb::GameData;
 
 pub struct Paths {
     /// Resource fork of the Mac game program (`Iron Helix™.rsrc`).
     pub mac_app: PathBuf,
     /// The `Iron Helix™ Files` folder from the Mac CD.
     pub mac_files: PathBuf,
+    /// The installed `Iron Helix Sounds` folder (next to the game program).
+    pub mac_sounds: PathBuf,
     /// Optional artwork for the space beside the stage.
     pub side_panel: PathBuf,
     /// Save a screenshot after a few seconds and quit (for checking layouts).
@@ -22,34 +25,43 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// `--mac-app <file>`, `--mac-files <folder>`, `--side-panel <png>`, `--screenshot <png>`.
+    /// `--mac-app <file>`, `--mac-files <folder>`, `--mac-sounds <folder>`,
+    /// `--side-panel <png>`, `--screenshot <png>`.
     pub fn from_args() -> Self {
         let mut p = Self {
             mac_app: PathBuf::from("out/mac/app/Iron Helix™/Iron Helix™.rsrc"),
             mac_files: PathBuf::from("out/mac/files/Iron Helix™ Files"),
+            mac_sounds: PathBuf::new(),
             side_panel: PathBuf::from("assets/side_panel.png"),
             screenshot: None,
         };
         let args: Vec<String> = std::env::args().collect();
+        let mut sounds = None;
         for pair in args.windows(2) {
             match pair[0].as_str() {
                 "--mac-app" => p.mac_app = PathBuf::from(&pair[1]),
                 "--mac-files" => p.mac_files = PathBuf::from(&pair[1]),
+                "--mac-sounds" => sounds = Some(PathBuf::from(&pair[1])),
                 "--side-panel" => p.side_panel = PathBuf::from(&pair[1]),
                 "--screenshot" => p.screenshot = Some(PathBuf::from(&pair[1])),
                 _ => {}
             }
         }
+        p.mac_sounds = sounds.unwrap_or_else(|| {
+            p.mac_app.parent().map(|d| d.join("Iron Helix Sounds")).unwrap_or_default()
+        });
         p
     }
 }
 
 pub struct GameAssets {
+    pub movie: Movie,
+    pub data: GameData,
     pub stage_w: usize,
     pub stage_h: usize,
-    /// The main interface artwork as RGBA, full stage size.
-    pub interface: Vec<u8>,
+    pub palette: paco::Palette,
     pub mac_files: PathBuf,
+    pub mac_sounds: PathBuf,
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
@@ -73,32 +85,20 @@ impl GameAssets {
         let movie = Movie::from_resource_fork(&fork).map_err(|e| e.to_string())?;
         let config = movie.config().map_err(|e| e.to_string())?;
         let (stage_w, stage_h) = config.stage_size();
-        let palette = paco::Palette::mac_system();
-
-        // The interface backdrop is the cast member named for the original
-        // PICT it was imported from.
-        let cast = movie
-            .cast_by_name("IFace.3/9/93.PICT FINAL!!")
-            .map_err(|e| e.to_string())?
-            .ok_or("interface artwork not found in the game")?;
-        let bitmap = movie
-            .bitmap(cast)
-            .map_err(|e| e.to_string())?
-            .ok_or("interface artwork is not a bitmap")?;
-        if (bitmap.width, bitmap.height) != (stage_w, stage_h) {
-            return Err(format!("interface artwork is {}x{}, expected the stage size", bitmap.width, bitmap.height));
-        }
-
+        let data = GameData::from_movie(&movie).map_err(|e| e.to_string())?;
         Ok(Self {
+            movie,
+            data,
             stage_w,
             stage_h,
-            interface: indexed_to_rgba(&bitmap.pixels, &palette),
+            palette: paco::Palette::mac_system(),
             mac_files: paths.mac_files.clone(),
+            mac_sounds: paths.mac_sounds.clone(),
         })
     }
 
-    /// Path of a movie in the Mac CD's files, e.g. `["Navigation", "L4", "4.04.FN"]`.
-    pub fn file(&self, parts: &[&str]) -> PathBuf {
-        parts.iter().fold(self.mac_files.clone(), |p, part| p.join(part))
+    /// Path of a file in the Mac CD's files, from a `/`-separated folder.
+    pub fn file(&self, folder: &str, name: &str) -> PathBuf {
+        folder.split('/').fold(self.mac_files.clone(), |p, part| p.join(part)).join(name)
     }
 }
