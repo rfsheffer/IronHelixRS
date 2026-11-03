@@ -223,8 +223,12 @@ Things learned from the actual Iron Helix files that the docs don't say:
   squashed copies of the image stacked vertically.
 - **The compact 4-bit LUT persists across frames**, not just across lines of one bitmap.
 - **Escape 5 ("skip scan lines", count 0)** is how change-only frames say "rest of this line is
-  unchanged". If a line ends exactly at the right edge, the cursor has already wrapped and the
-  escape is a no-op.
+  unchanged". It always moves down a line, even right after a line that ended exactly at the
+  right edge: there it means "the next line is unchanged". (An earlier version treated that case
+  as a no-op, which shifted every later line of the field: interlaced movies showed streaks
+  through their text, as in the phase movies and some location strips, and 88 of deck 2's
+  death clips decoded differently from the PC's copies. With the fix, the Mac and PC copies of
+  deck 2 agree on all but 2 movies.)
 - **Phantom lines:** the packer often encodes data below the bottom of the area, built from
   leftover memory past its buffer (sometimes recognizable 68k machine code). Usually it's just a
   trailing newline; occasionally literal pixels. Anything written below the area is discarded.

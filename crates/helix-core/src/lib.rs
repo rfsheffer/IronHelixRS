@@ -33,6 +33,11 @@ pub enum Effect {
     InfoClip { folder: String, name: String },
     /// Play an installed sound.
     Sound(String),
+    /// Stop the sound playing.
+    StopSound,
+    /// Show the probe on the map at this node line while the effects after
+    /// it play (the floors passing during an elevator ride).
+    MapLine(usize),
     /// Pause, in seconds (elevator rides).
     Wait(f32),
     /// Show the view window as it was before the scanner's movies.

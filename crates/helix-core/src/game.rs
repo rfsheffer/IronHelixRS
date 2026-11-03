@@ -358,7 +358,11 @@ impl Game {
                 ArmEvent::Motion => fx.push(Effect::Sound("Arm Motion".into())),
                 ArmEvent::Stop => fx.push(Effect::Sound("Arm Stop".into())),
                 ArmEvent::HotSpot => fx.push(Effect::Sound("Arm HotSpot".into())),
-                ArmEvent::Retracted => self.arm = None,
+                // The motion sound would otherwise run on after the arm is in.
+                ArmEvent::Retracted => {
+                    self.arm = None;
+                    fx.push(Effect::StopSound);
+                }
                 // Docked at the port: clearance 02 opens the computer.
                 ArmEvent::Docked if self.nav.access().grants("02") => fx.extend(self.open_computer()),
                 ArmEvent::Docked => fx.extend(self.reject_computer()),

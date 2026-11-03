@@ -94,6 +94,10 @@ const TEXT_COLOR: [u8; 3] = [0x00, 0xFF, 0x00];
 /// How long a pressed control-screen button stays lit.
 const HILITE_TIME: f32 = 0.15;
 
+/// The probe's map marker slides this far per tick after a move (Lingo's
+/// AnimateMap speed for the probe).
+const MARKER_SPEED: f32 = 2.0;
+
 /// A lit button: its cast and where.
 type Hilite = (u16, (i32, i32));
 
@@ -127,6 +131,11 @@ pub struct GameScreen {
     segue: Option<Player>,
     /// Computer screens by name (the first member with that name).
     screens: HashMap<String, u16>,
+    /// The node line the map shows during an elevator ride.
+    map_line: Option<usize>,
+    /// Where the probe's marker is drawn: its deck and position, which
+    /// slides toward the probe's node after each move.
+    marker: Option<(u8, (f32, f32))>,
     wait: f32,
     tick_time: f32,
     map_mode: u8,
@@ -188,6 +197,8 @@ impl GameScreen {
             panel_still: None,
             segue: None,
             screens,
+            map_line: None,
+            marker: None,
             wait: 0.0,
             tick_time: 0.0,
             map_mode: 1,
@@ -206,6 +217,47 @@ impl GameScreen {
         self.playing() || self.game.scan_busy()
     }
 
+    /// The probe's deck and map point (map item 2, or 6 in a ladder), on
+    /// the line the map is following.
+    fn probe_target(&self) -> Option<(u8, (i32, i32))> {
+        let nav = self.game.nav();
+        let line = self.map_line.unwrap_or(nav.line());
+        let item = if self.map_line.is_none() && nav.in_ladder() { 6 } else { 2 };
+        let level = self.game.graph().at_line(line)?.level();
+        Some((level, self.map_point(line, item)?))
+    }
+
+    /// The marker is still sliding to the probe's node.
+    fn marker_moving(&self) -> bool {
+        match (self.marker, self.probe_target()) {
+            (Some((level, (x, y))), Some((tl, (tx, ty)))) => level == tl && (x != tx as f32 || y != ty as f32),
+            _ => false,
+        }
+    }
+
+    /// Slide the marker one step (Lingo's AnimateMap), or put it straight
+    /// on a new deck.
+    fn step_marker(&mut self, slide: bool) {
+        let Some((level, (tx, ty))) = self.probe_target() else { return };
+        let target = (tx as f32, ty as f32);
+        match &mut self.marker {
+            Some((l, pos)) if *l == level => {
+                if !slide {
+                    return;
+                }
+                let (dx, dy) = (target.0 - pos.0, target.1 - pos.1);
+                let longest = dx.abs().max(dy.abs());
+                if longest <= MARKER_SPEED {
+                    *pos = target;
+                } else {
+                    pos.0 += dx / longest * MARKER_SPEED;
+                    pos.1 += dy / longest * MARKER_SPEED;
+                }
+            }
+            _ => self.marker = Some((level, target)),
+        }
+    }
+
     /// A movie, clip, wait or queued effect is in progress.
     fn playing(&self) -> bool {
         self.view.is_some()
@@ -215,6 +267,7 @@ impl GameScreen {
             || self.segue.is_some()
             || self.wait > 0.0
             || !self.queue.is_empty()
+            || self.marker_moving()
     }
 
     pub fn game(&self) -> &Game {
@@ -454,10 +507,17 @@ impl GameScreen {
                 self.hilite = None;
             }
         }
-        if !self.playing() || self.game.scan_busy() {
+        // The marker moves to a new deck at once and slides once a move's
+        // movie is over.
+        self.step_marker(false);
+        let movie_playing = self.view.is_some() || self.wait > 0.0 || !self.queue.is_empty();
+        if !movie_playing || self.game.scan_busy() || self.marker_moving() {
             self.tick_time += dt;
             while self.tick_time >= TICK {
                 self.tick_time -= TICK;
+                if !movie_playing {
+                    self.step_marker(true);
+                }
                 for e in self.game.tick() {
                     match e {
                         // Blips play at once rather than waiting their turn.
@@ -516,6 +576,7 @@ impl GameScreen {
             }
             let Some(effect) = self.queue.pop_front() else {
                 self.pressed = None;
+                self.map_line = None;
                 return;
             };
             match effect {
@@ -527,6 +588,7 @@ impl GameScreen {
                         Ok(clip) => {
                             self.status = format!("{folder}/{name}");
                             self.view_is_nav = folder.starts_with("Navigation");
+                            self.start_audio(&clip).await;
                             self.view = Some(Player::new(clip));
                         }
                         Err(e) => self.status = e,
@@ -534,16 +596,23 @@ impl GameScreen {
                 }
                 Effect::InfoClip { folder, name } => {
                     if let Ok(clip) = crate::patches::info_clip(assets, &folder, &name) {
+                        self.start_audio(&clip).await;
                         self.info = Some(Player::new(clip));
                     }
                 }
                 Effect::Sound(s) => self.sounds.play(&s).await,
+                Effect::StopSound => self.sounds.stop(),
+                Effect::MapLine(line) => {
+                    self.map_line = Some(line);
+                    self.step_marker(false);
+                }
                 Effect::Wait(seconds) => self.wait = seconds,
                 Effect::RestoreView => self.view_still = self.nav_still.clone(),
                 Effect::Panel { folder, name, keep } => match Clip::load(&assets.file(&folder, &name)) {
                     Ok(clip) => {
                         self.status = format!("{folder}/{name}");
                         self.panel_still = None;
+                        self.start_audio(&clip).await;
                         self.panel = Some((Player::new(clip), keep));
                     }
                     Err(e) => self.status = e,
@@ -552,6 +621,7 @@ impl GameScreen {
                 Effect::Segue { folder, name } => match Clip::load(&assets.file(&folder, &name)) {
                     Ok(clip) => {
                         self.status = format!("{folder}/{name}");
+                        self.start_audio(&clip).await;
                         self.segue = Some(Player::new(clip));
                     }
                     Err(e) => self.status = e,
@@ -559,11 +629,19 @@ impl GameScreen {
                 Effect::Bridge { folder, name } => match Clip::load(&assets.file(&folder, &name)) {
                     Ok(clip) => {
                         self.status = format!("{folder}/{name}");
+                        self.start_audio(&clip).await;
                         self.bridge_movie = Some(Player::new(clip));
                     }
                     Err(e) => self.status = e,
                 },
             }
+        }
+    }
+
+    /// Start a clip's own sound track, if it has one.
+    async fn start_audio(&mut self, clip: &Clip) {
+        if let Some((key, wav)) = &clip.audio {
+            self.sounds.play_wav(key, wav).await;
         }
     }
 
@@ -752,13 +830,19 @@ impl GameScreen {
 
         // Map, probe and defender.
         let nav = self.game.nav();
-        let probe_level = nav.level();
+        let probe_line = self.map_line.unwrap_or(nav.line());
+        let probe_level = self.game.graph().at_line(probe_line).map_or(nav.level(), |n| n.level());
+        // The marker as it slides; the node's point until it's placed.
+        let marker = self
+            .marker
+            .filter(|(level, _)| *level == probe_level)
+            .map(|(_, (x, y))| (x.round() as i32, y.round() as i32));
         let defender_level = self.game.graph().at_line(DEFENDER_LINE).map_or(0, |n| n.level());
         let probe_item = if nav.in_ladder() { 6 } else { 2 };
         let (map_cast, probe, defender) = match self.map_mode {
             1 => (
                 CAST_LEVEL_MAPS + probe_level as u16 - 1,
-                self.map_point(nav.line(), probe_item).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)),
+                marker.or(self.map_point(probe_line, probe_item)).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)),
                 (defender_level == probe_level)
                     .then(|| self.map_point(DEFENDER_LINE, 2).map(|p| (CAST_DEFENDER_ICON, p)))
                     .flatten(),
@@ -766,13 +850,13 @@ impl GameScreen {
             2 => (
                 CAST_LEVEL_MAPS + defender_level as u16 - 1,
                 (defender_level == probe_level)
-                    .then(|| self.map_point(nav.line(), probe_item).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)))
+                    .then(|| marker.or(self.map_point(probe_line, probe_item)).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)))
                     .flatten(),
                 self.map_point(DEFENDER_LINE, 2).map(|p| (CAST_DEFENDER_ICON, p)),
             ),
             _ => (
                 CAST_LEVEL_MAPS + 6,
-                self.map_point(nav.line(), 4).map(|p| (CAST_PROBE_OVERVIEW, p)),
+                self.map_point(probe_line, 4).map(|p| (CAST_PROBE_OVERVIEW, p)),
                 self.map_point(DEFENDER_LINE, 4).map(|p| (CAST_DEFENDER_OVERVIEW, p)),
             ),
         };

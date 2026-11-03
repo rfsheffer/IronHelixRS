@@ -93,6 +93,27 @@ impl Sounds {
         Self { folder, cast, loaded: HashMap::new(), playing: None }
     }
 
+    pub fn stop(&mut self) {
+        if let Some(previous) = self.playing.take()
+            && let Some(Some(s)) = self.loaded.get(&previous)
+        {
+            stop_sound(s);
+        }
+    }
+
+    /// Play a movie's sound track (a WAV), cached under `key`.
+    pub async fn play_wav(&mut self, key: &str, wav: &[u8]) {
+        if !self.loaded.contains_key(key) {
+            let sound = load_sound_from_bytes(wav).await.ok();
+            self.loaded.insert(key.to_string(), sound);
+        }
+        self.stop();
+        if let Some(Some(s)) = self.loaded.get(key) {
+            play_sound_once(s);
+            self.playing = Some(key.to_string());
+        }
+    }
+
     pub async fn play(&mut self, name: &str) {
         if !self.loaded.contains_key(name) {
             let installed = std::fs::read(self.folder.join(name)).ok().and_then(|a| aiff_to_wav(&a));

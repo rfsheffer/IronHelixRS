@@ -471,7 +471,9 @@ back to the title.
 | 3 | whole-ship overview (both icons, overview coordinates) |
 
 - Probe icon shows its facing (4 frames). Icons glide to new positions in straight lines
-  (probe ~2 px/step, defender ~7). Ladder positions use the in-ladder coordinates.
+  (probe ~2 px/step, defender ~7; Lingo's AnimateMap), after the move's movie and before the
+  next input. Ladder positions use the in-ladder coordinates. During an elevator ride the map
+  is redrawn every floor (InstallMap), showing each deck in turn.
 - Defender icon hidden when it is off; blinks when jammed.
 
 ---

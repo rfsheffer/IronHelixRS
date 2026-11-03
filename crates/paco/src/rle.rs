@@ -45,7 +45,8 @@ pub struct RleStats {
     pub end_row: usize,
     pub end_x: usize,
     pub lut_lines: usize,
-    /// "Go to next line" escapes that arrived right after a line had wrapped.
+    /// "Go to next line" escapes that arrived right after a line had wrapped
+    /// (each still moves down a line).
     pub newline_after_wrap: usize,
     /// Pixels written to the phantom line just below the area (see
     /// [`Cursor::put`]); these are discarded.
@@ -121,16 +122,17 @@ impl<'t, 'a> Cursor<'t, 'a> {
         }
     }
 
-    /// Move to the start of the next scan line. If a line just finished
-    /// exactly at the area's right edge, the cursor has already wrapped and
-    /// this is a no-op.
+    /// Move to the start of the next scan line. A newline right after a line
+    /// that ended exactly at the area's right edge still moves down: the
+    /// packer means an unchanged line there. (Treating it as a no-op shifted
+    /// every later line of the field, which showed as streaks through text in
+    /// interlaced movies, and made the Mac death clips differ from the PC's.)
     fn next_line(&mut self) {
         if self.x == 0 && self.wrapped {
             self.stats.newline_after_wrap += 1;
-        } else {
-            self.x = 0;
-            self.row += 1;
         }
+        self.x = 0;
+        self.row += 1;
         self.wrapped = false;
     }
 
@@ -406,4 +408,22 @@ fn decode_lut_line(src: &mut Bytes, cur: &mut Cursor, lut: &mut [u8; 16], _at: u
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newline_after_a_full_line_skips_a_line() {
+        // A 2x3 area: two literals fill row 0, "next line" moves past row 1,
+        // one literal lands on row 2, then END OF BITMAP.
+        let data = [0x02, 7, 7, 0x00, 0x50, 0x00, 0x01, 9, 0x00, 0xF0];
+        let mut canvas = vec![0u8; 6];
+        let rows = [0, 1, 2];
+        let mut target = Target { canvas: &mut canvas, stride: 2, left: 0, top: 0, width: 2, height: 3, row_map: &rows };
+        let stats = decode(&data, &mut target, &mut [0; 16]).unwrap();
+        assert_eq!(canvas, [7, 7, 0, 0, 9, 0]);
+        assert_eq!(stats.newline_after_wrap, 1);
+    }
 }

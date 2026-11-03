@@ -413,6 +413,8 @@ impl Navigator {
             fx.extend(self.toggle_door());
         }
         fx.push(Effect::Sound("Elevator2".into()));
+        // The map follows the car floor by floor.
+        fx.push(Effect::MapLine(self.line));
         while self.level() != level {
             fx.push(Effect::Wait(100.0 * TICK));
             let offset = if level > self.level() { self.node().elevator_up } else { self.node().elevator_down };
@@ -422,6 +424,7 @@ impl Navigator {
             if self.line == before {
                 break;
             }
+            fx.push(Effect::MapLine(self.line));
         }
         fx.push(Effect::Wait(40.0 * TICK));
         fx.extend(self.toggle_door()); // arrived: the door opens

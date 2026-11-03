@@ -181,11 +181,12 @@ fn info(file: &Path, opts: DecoderOptions) -> Result<()> {
         for op in &chunk.ops {
             match op {
                 Op::Bitmap(b) => println!(
-                    "  BITMAP {}x{}+{}+{} {:?}{}{} ({} bytes)",
+                    "  BITMAP {}x{}+{}+{} {:?}{}{} ({} bytes, bits {:#06x})",
                     b.width, b.height, b.left, b.top, b.compression(),
                     if b.diffs_only() { " diffs" } else { "" },
                     if b.lut_encoded() { " lut" } else { "" },
-                    b.data.len()
+                    b.data.len(),
+                    b.bits1
                 ),
                 Op::Palette(p) => println!(
                     "  PALETTE {:?} when {} time {} colors {} (num_colors {})",

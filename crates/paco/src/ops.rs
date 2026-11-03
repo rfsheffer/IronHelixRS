@@ -210,10 +210,15 @@ impl OpSound {
     pub fn flush(&self) -> bool { bits(self.bits1 as u32, 15, 1) != 0 }
     pub fn rate(&self) -> u32 { bits(self.bits1 as u32, 10, 7) }
 
-    /// Sample rate in Hz. Only codes 0 and 2 appear in the Windows release,
-    /// and both match 11,025 Hz WAV files shipped alongside the movies.
+    /// Sample rate in Hz. Codes 0 and 2 (the Windows release's, and the Mac
+    /// computer clips and video messages) match 11,025 Hz WAV files shipped
+    /// alongside the movies; code 3 (the Mac phase movies) runs at twice
+    /// that, judging by sample counts against running time.
     pub fn sample_rate_hz(&self) -> u32 {
-        11_025
+        match self.rate() {
+            3 => 22_050,
+            _ => 11_025,
+        }
     }
 }
 
