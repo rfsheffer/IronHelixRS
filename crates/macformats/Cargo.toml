@@ -1,0 +1,10 @@
+[package]
+name = "macformats"
+description = "Readers for classic Mac formats: StuffIt 5, resource forks, DiskCopy NDIF images, HFS"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+crc32fast.workspace = true

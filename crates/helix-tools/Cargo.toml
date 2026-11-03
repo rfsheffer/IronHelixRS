@@ -1,0 +1,22 @@
+[package]
+name = "helix-tools"
+description = "Command line tools for picking apart Iron Helix game data"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "paco"
+path = "src/bin/paco.rs"
+
+[[bin]]
+name = "macx"
+path = "src/bin/macx.rs"
+
+[dependencies]
+paco.workspace = true
+macformats.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+png.workspace = true
+gif.workspace = true

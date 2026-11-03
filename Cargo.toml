@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+paco = { path = "crates/paco" }
+macformats = { path = "crates/macformats" }
+thiserror = "2"
+crc32fast = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+png = "0.17"
+gif = "0.13"

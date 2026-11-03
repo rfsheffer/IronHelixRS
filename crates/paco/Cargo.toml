@@ -1,0 +1,9 @@
+[package]
+name = "paco"
+description = "Decoder for PACo (CoSA PICS Animation Compiler) CAVF movie files"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true

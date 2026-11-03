@@ -1,0 +1,7 @@
+/target
+/out
+
+# Game data never goes in the repo; it lives in ../Reference
+*.img
+*.sit
+*.iso
