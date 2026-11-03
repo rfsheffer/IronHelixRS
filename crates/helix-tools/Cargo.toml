@@ -25,6 +25,10 @@ path = "src/bin/sfilm.rs"
 name = "tomp4"
 path = "src/bin/tomp4.rs"
 
+[[bin]]
+name = "xref"
+path = "src/bin/xref.rs"
+
 [dependencies]
 paco.workspace = true
 macformats.workspace = true

@@ -14,7 +14,7 @@ crates/paco          library: PACo (CAVF) movie parser, RLE decoder, frame compo
 crates/macformats    library: StuffIt 5 (+Arsenic), resource forks, DiskCopy NDIF (+ADC), HFS
 crates/cdimage       library: ISO9660 on raw (2352-byte) or cooked (2048-byte) CD images
 crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Sega CD PCM audio
-crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`)
+crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`)
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
 ```
@@ -79,6 +79,19 @@ Sega CD movies are tagged with the Genesis 8:7 pixel aspect so players show them
 shape; PC and Mac pixels are square. Each frame keeps its own duration: a movie with a constant
 frame rate is encoded at that rate, anything uneven at 60 fps with frames repeated to match.
 
+## Comparing releases: `xref`
+
+```
+target/release/xref out/sega/files --against ../Reference/Game/Windows/HELIX --against "out/mac/files/Iron Helix™ Files" > out/sega_xref.tsv
+```
+
+For each movie in the first folder, lists the closest-looking movies in the others (any format).
+Fingerprints are 24 sampled frames shrunk to 8×8 brightness grids; the score is the average
+distance from each sampled frame to its nearest frame in the candidate, so different frame rates,
+lengths, palettes and codecs still match. Around 0.4–0.7 means the same footage. Only movies of
+similar shape are compared, so reframed versions (like the Sega computer screens) show up as
+unmatched and need a look.
+
 ## Format findings
 
 PACo (CoSA's PICS Animation Compiler) writes CAVF files. Primary docs: `CAVF.h` and the RLE notes in
@@ -116,9 +129,30 @@ All 3,353 PACo movies in the Windows release decode with zero errors.
   forks, which are classic StuffIt 1.5 (`SIT!`) archives, not yet supported.
 - **Sega CD:** `.img` is Mode 1 / 2352-byte-sector ISO9660 (volume `MEGA_CD`) plus a CD audio
   track. Same folder layout as the PC (`NAV`, `SEGUES`, `VIDEO`, ...), but the videos are Sega
-  FILM files using the "Cinepak for Sega" codec (see below). Sega-only content:
-  `SEGUES/ENDING` (a 97.8-second extended ending with live-action footage), `VIDEO/CPTSPEE`, and
-  a reworked opening (`OPENING/BARLOGO`, `FIREHELX`, `HELIXTUN`, `OPENING`, `SML_OPEN`).
+  FILM files using the "Cinepak for Sega" codec (see below).
+
+### What the Sega CD has that the PC and Mac don't
+
+Found by fingerprinting every movie (`xref`, below) and checking the leftovers by eye:
+
+- **`SEGUES/ENDING`**: a 97.8-second extended ending with no PC/Mac counterpart: the research
+  vessel *Indiana*, a starbase, the tractor beam in "arrest mode", docking, interiors, and
+  live-action footage of the special guest star (Cintra Wilson, per the Sega credits).
+- **`OPENING/OPENING`** and **`SML_OPEN`**: a re-edited opening with shots not in the PC/Mac
+  files compared (a "TARGET: NONUS-7" orbit display, an Earth-like planet).
+- **`OPENING/OPENCRDT`**: opening credits with an animated 3D Drew Pictures logo.
+- **`SEGUES/CREDITS`**: end credits adding the Sega CD team (Brian A. Rice, Inc.).
+- **Re-edited segues**: `DEATH1/2` and `ENERGY1/2` follow the "probe destroyed" message with the
+  probe-launch footage (reused from `ENTER`) that the PC versions don't show there.
+- **Sega-specific screens**: title card (`FIREHELX`), conversion logo (`BARLOGO`), main menu
+  (`SELECT`), and all computer screens rebuilt as a wide 234×118 layout with a "Remote DataLink"
+  panel and A/C controller prompts.
+- **CD audio track 2**: the Iron Helix theme as 44.1 kHz 16-bit stereo CD audio (116.8 s), a
+  much better copy than the PC's 11 kHz 8-bit `RIH_TUNE.WAV`.
+
+Not new, despite being Sega-only file names: `VIDEO/CPTSPEE` is the captain's speech (in the PC
+opening and the Mac's `CAPT SPEECH`); 32×32 "movies" (`SOUND/*`, `*CLOSE`, `HELIXTUN`) are
+audio clips with a dummy picture.
 
 ## Sega CD video: "Cinepak for Sega"
 

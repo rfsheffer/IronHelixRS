@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use helix_tools::movies::{self, Kind, detect};
 use helix_tools::output::{self, AnimFrame, Mp4Options, Pixels, collect_files};
 
 #[derive(Parser)]
@@ -39,72 +40,8 @@ struct Cli {
     jobs: Option<usize>,
 }
 
-/// A decoded movie, ready to encode.
-struct Clip {
-    width: usize,
-    height: usize,
-    /// RGB frames with durations in milliseconds.
-    frames: Vec<(Vec<u8>, f64)>,
-    /// Unsigned 8-bit mono sound and its sample rate.
-    sound: Option<(u32, Vec<u8>)>,
-    /// Shape of one source pixel.
-    pixel_aspect: (u32, u32),
-}
-
-enum Kind {
-    Paco,
-    SegaFilm,
-}
-
-fn detect(data: &[u8]) -> Option<Kind> {
-    if data.starts_with(b"FILM") {
-        Some(Kind::SegaFilm)
-    } else if paco::Movie::parse(data).is_ok() {
-        Some(Kind::Paco)
-    } else {
-        None
-    }
-}
-
-fn load_paco(data: &[u8]) -> Result<Clip> {
-    let movie = paco::Movie::parse(data)?;
-    let frames = paco::Decoder::new(&movie, Default::default()).decode_all()?;
-    let frames = frames
-        .iter()
-        .map(|f| {
-            let palette = f.palette.to_rgb_bytes();
-            let rgb = Pixels::Indexed { data: &f.pixels, palette: &palette }.to_rgb();
-            (rgb, f.duration_ms)
-        })
-        .collect();
-    Ok(Clip {
-        width: movie.width(),
-        height: movie.height(),
-        frames,
-        sound: movie.audio().map(|a| (a.sample_rate, a.samples)),
-        pixel_aspect: (1, 1), // Mac and PC pixels are square
-    })
-}
-
-fn load_film(data: &[u8]) -> Result<Clip> {
-    let film = segafilm::Film::parse(data)?;
-    let decoded = segafilm::decode_film(&film)?;
-    let (width, height) = decoded.frames.first().map(|(f, _)| (f.width, f.height)).context("no video frames")?;
-    let raw = segafilm::film_audio(&film);
-    Ok(Clip {
-        width,
-        height,
-        frames: decoded.frames.into_iter().map(|(f, ms)| (f.rgb, ms)).collect(),
-        sound: (!raw.is_empty()).then(|| (segafilm::audio::SAMPLE_RATE, segafilm::audio::to_unsigned(&raw))),
-        pixel_aspect: (8, 7), // Genesis 256-pixel mode on a 4:3 TV
-    })
-}
-
 fn convert(data: &[u8], kind: Kind, out: &Path, ffmpeg: &Path, scale: u32) -> Result<usize> {
-    let clip = match kind {
-        Kind::Paco => load_paco(data)?,
-        Kind::SegaFilm => load_film(data)?,
-    };
+    let clip = movies::load(data, kind)?;
     let frames: Vec<AnimFrame> = clip
         .frames
         .iter()
