@@ -518,9 +518,17 @@ random `Video:Lose 1-3`, back to the title.
 theme (played once, as `sound playfile` does). Title (score frame `BootUp`, the menu `NEWSTARTUP.PS`
 over the bridge): five skill buttons (channels 10-14, casts 258-266, +1 lit), Begin, Load saved
 game, Replay intro, Quit, About (channels 15-19, casts 268-276, +1 pressed; each lights for 15
-ticks before acting). About (`Segues:About` at 88,61 on black) stays until a key or click; Quit
-plays `Segues:Credits` there, then exits. The new engine lets a click or key skip the opening
-movies and the credits.
+ticks before acting). About (`Segues:About`, a single still card, at 88,61 on black) stays until a
+key or click, with the theme playing on; Quit plays `Segues:Credits` (99 s) there, then exits.
+
+The PC release (seen running) plays both in a framed window over the title screen
+(`GRAPHICS\SEGUE_A.RAW`, 328x246: a grey bevel around black). Its credits are a different movie,
+`SEGUES\CREDITS`: they scroll (1,453 frames at 30 fps, about 48 s; the Mac's are pages), with
+`OPENING\CREDTUNE.WAV` (4 s) looping under them. The theme plays on under About, and Load with no
+saved game beeps over the music. The new engine does all of this, using the Mac's silent credits
+when the PC files are missing. A click or key closes About, skips the opening movies, and quits at
+once during the credits. The title's movies decode as they play (`paco::Stream`): whole, the
+opening credits alone would take about 200 MB.
 
 ### 12.2 New game ✅
 

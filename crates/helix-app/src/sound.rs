@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use macroquad::audio::{Sound, load_sound_from_bytes, play_sound_once, stop_sound};
+use macroquad::audio::{PlaySoundParams, Sound, load_sound_from_bytes, play_sound, play_sound_once, stop_sound};
 
 /// Convert an AIFF file to an in-memory WAV, which macroquad can play.
 /// Handles the uncompressed mono/stereo 8- and 16-bit files the game ships.
@@ -114,7 +114,44 @@ impl Sounds {
         }
     }
 
+    /// Play a WAV over and over (the PC's credits tune), cached under `key`;
+    /// like any sound, the next one stops it.
+    pub async fn loop_wav(&mut self, key: &str, wav: &[u8]) {
+        if !self.loaded.contains_key(key) {
+            let sound = load_sound_from_bytes(wav).await.ok();
+            self.loaded.insert(key.to_string(), sound);
+        }
+        self.stop();
+        if let Some(Some(s)) = self.loaded.get(key) {
+            play_sound(s, PlaySoundParams { looped: true, volume: 1.0 });
+            self.playing = Some(key.to_string());
+        }
+    }
+
+    /// Play a sound on top of whatever is playing, which carries on (a beep
+    /// over the title music).
+    pub async fn play_over(&mut self, name: &str) {
+        self.load(name).await;
+        if let Some(Some(s)) = self.loaded.get(name) {
+            play_sound_once(s);
+        }
+    }
+
     pub async fn play(&mut self, name: &str) {
+        self.load(name).await;
+        if let Some(previous) = self.playing.take()
+            && let Some(Some(s)) = self.loaded.get(&previous)
+        {
+            stop_sound(s);
+        }
+        if let Some(Some(s)) = self.loaded.get(name) {
+            play_sound_once(s);
+            self.playing = Some(name.to_string());
+        }
+    }
+
+    /// Load a sound by name, once.
+    async fn load(&mut self, name: &str) {
         if !self.loaded.contains_key(name) {
             // The installed files' names differ in case from the scripts'
             // ("60 min" for "60 Min").
@@ -130,15 +167,6 @@ impl Sounds {
                 None => None,
             };
             self.loaded.insert(name.to_string(), sound);
-        }
-        if let Some(previous) = self.playing.take()
-            && let Some(Some(s)) = self.loaded.get(&previous)
-        {
-            stop_sound(s);
-        }
-        if let Some(Some(s)) = self.loaded.get(name) {
-            play_sound_once(s);
-            self.playing = Some(name.to_string());
         }
     }
 }

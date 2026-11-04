@@ -33,7 +33,7 @@ line.
 | Release | Files you start with | What the game reads | Without it |
 |---|---|---|---|
 | **Mac** (required) | `../Reference/Game/Mac/Iron-Helix_Mac_EN.sit`, a StuffIt archive holding the CD image `Iron Helix™ CD.img` | From the CD: the `Iron Helix™ Files` folder (movies), at `out/mac/files/Iron Helix™ Files` (`--mac-files`). From `Iron Helix™ Installer` on the CD: the game program's resource fork `Iron Helix™.rsrc` (its scripts, tables, artwork and sounds), at `out/mac/app/Iron Helix™/Iron Helix™.rsrc` (`--mac-app`), with the installed `Iron Helix Sounds` and `Misc Files` folders beside it | The game won't start |
-| **PC** (optional) | The `HELIX` folder from the PC CD, copied as is to `../Reference/Game/Windows/HELIX` | `HELIX.EXE` (the hidden rooms' node data) and the movies in `NAV`, `SEGUES` and so on (`--pc-files`) | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09) |
+| **PC** (optional) | The `HELIX` folder from the PC CD, copied as is to `../Reference/Game/Windows/HELIX` | `HELIX.EXE` (the hidden rooms' node data), the movies in `NAV`, `SEGUES` and so on, and the credits tune `OPENING/CREDTUNE.WAV` (`--pc-files`) | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09); quitting shows the Mac's silent credit pages instead of the PC's scrolling credits with their tune |
 | **Sega CD** (optional) | The disc image `../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue` with its `.img` | The theme from the image's audio track 2, straight from the `.cue`/`.img` (`--sega-cue`); the extended ending `SEGUES/ENDING.SEG` from the files extracted to `out/sega/files` (`--sega-files`) | The Mac's tune on the title screen; no extended ending after a skill-5 win |
 
 Setting up, in order (the Sega step is only for the extended ending; the theme needs no setup):
@@ -86,7 +86,8 @@ cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-file
 ```
 
 Defaults are the paths in [What you need](#what-you-need) (sounds come from the
-`Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`).
+`Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`). The window
+takes the Mac release's icon, the probe, from the game program's resource fork.
 
 With the PC CD's `HELIX` folder (`--pc-files`, default `../Reference/Game/Windows/HELIX` when it
 exists) the game adds the **PC release's hidden rooms**: 2.42/2.43 behind the "Zero-Pressure"

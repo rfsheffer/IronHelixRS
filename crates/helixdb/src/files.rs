@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 pub struct GameFiles {
     mac: PathBuf,
     installed: Option<PathBuf>,
+    /// The PC CD's `HELIX` folder.
+    pc: Option<PathBuf>,
     /// PC navigation movies by deck, keyed by [`key`].
     pc_nav: HashMap<u8, HashMap<String, PathBuf>>,
 }
@@ -44,7 +46,7 @@ impl GameFiles {
                 movies.insert(key(&file.file_name().to_string_lossy()), file.path());
             }
         }
-        Self { mac: mac.into(), installed: None, pc_nav }
+        Self { mac: mac.into(), installed: None, pc: pc.map(Path::to_path_buf), pc_nav }
     }
 
     /// Also look in the installed game's folder (the one holding `Misc Files`).
@@ -62,6 +64,12 @@ impl GameFiles {
     /// it exists).
     pub fn mac_path(&self, folder: &str, name: &str) -> PathBuf {
         folder.split('/').fold(self.mac.clone(), |p, part| p.join(part)).join(name)
+    }
+
+    /// A file on the PC CD by its own folder and name (`SEGUES`, `CREDITS`),
+    /// if the player has it.
+    pub fn pc_file(&self, folder: &str, name: &str) -> Option<PathBuf> {
+        find_in(self.pc.as_ref()?, folder, name)
     }
 
     /// A movie or clip by its Mac folder and name, from whichever release has it.

@@ -17,6 +17,7 @@
 
 mod assets;
 mod ending;
+mod icon;
 mod layout;
 mod patches;
 mod screen;
@@ -102,6 +103,8 @@ fn window_conf() -> Conf {
         .unwrap_or((1280, 720));
     Conf {
         window_title: "Iron Helix".to_owned(),
+        // The Mac release's probe icon, from the player's files.
+        icon: icon::mac_icon(&Paths::from_args().mac_app),
         window_width,
         window_height,
         high_dpi: true,

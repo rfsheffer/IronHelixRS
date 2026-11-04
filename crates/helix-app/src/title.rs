@@ -4,8 +4,14 @@
 //! stage, the opening movie on the bridge's monitor, then the title menu
 //! over the bridge (score frame `BootUp`) with the theme playing: five
 //! skill buttons and Begin New Game, Load Saved Game, Replay Intro, Quit
-//! and About. About shows its movie until a key or click; quitting plays
-//! the credits segue.
+//! and About. About shows its card; quitting plays the credits.
+//!
+//! As the PC release does: About and the credits play in a framed window
+//! over the menu (its `SEGUE_A` frame; the Mac showed them on black), the
+//! theme plays on under About and a refused Load beeps over it, and the
+//! credits are the PC's scrolling `SEGUES\CREDITS` with `CREDTUNE.WAV`
+//! looping (the Mac's are pages, silent; used without the PC files). The
+//! movies stream, since the title's are large.
 
 use std::rc::Rc;
 
@@ -16,7 +22,7 @@ use macroquad::input::KeyCode;
 use crate::assets::GameAssets;
 use crate::sound::Sounds;
 use crate::sprites::{Canvas, Cast};
-use crate::video::{Clip, Player};
+use crate::video::Stream;
 
 /// Sprite channels of the title menu: skill levels 1-5, then the buttons.
 const CH_SKILL: usize = 10;
@@ -27,8 +33,15 @@ const CH_QUIT: usize = 18;
 const CH_ABOUT: usize = 19;
 /// Where the opening plays on the bridge (score frame `BridgeBG`).
 const OPENING_AT: (i32, i32) = (177, 66);
-/// Where About and the credits play (frames `AboutScreen`, `QuitFrame`).
-const SEGUE_AT: (i32, i32) = (88, 61);
+/// About and the credits (320x240): centered in the area the score's
+/// `AboutScreen` and `QuitFrame` give them (88,61, 346x257).
+const WINDOW_MOVIE_AT: (i32, i32) = (101, 69);
+/// The window's frame around them, the size of the PC's `SEGUE_A`
+/// (328x246): a bevel, light along the top and left, dark below and right.
+const WINDOW: (i32, i32, i32, i32) = (97, 66, 328, 246);
+const WINDOW_LIGHT: [u8; 3] = [0x77, 0x77, 0x77];
+const WINDOW_MID: [u8; 3] = [0x66, 0x66, 0x66];
+const WINDOW_DARK: [u8; 3] = [0x33, 0x33, 0x33];
 /// A pressed menu button stays lit this long before acting (Delayof 15).
 const PRESS_TIME: f32 = 0.25;
 
@@ -41,14 +54,14 @@ pub enum Choice {
 
 enum Stage {
     /// The credits and title, over the whole stage.
-    Credits(Player),
+    Title(Stream),
     /// The opening on the bridge's monitor.
-    Opening(Player),
+    Opening(Stream),
     Menu,
-    /// About (its last frame stays up until a key or click).
-    About(Player),
-    /// The credits segue, then quit.
-    Leaving(Player),
+    /// About's card in the window, until a key or click.
+    About(Stream),
+    /// The credits in the window, then quit.
+    Credits(Stream),
     Done,
 }
 
@@ -64,6 +77,8 @@ pub struct TitleScreen {
     pressed: Option<(usize, f32)>,
     sounds: Sounds,
     choice: Option<Choice>,
+    /// About was closed: the menu on the next update.
+    back_to_menu: bool,
 }
 
 impl TitleScreen {
@@ -81,6 +96,7 @@ impl TitleScreen {
             pressed: None,
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             choice: None,
+            back_to_menu: false,
         })
     }
 
@@ -88,25 +104,28 @@ impl TitleScreen {
         &mut self.sounds
     }
 
+    /// Load a movie and start its sound track.
+    async fn start(&mut self, assets: &GameAssets, folder: &str, name: &str) -> Option<Stream> {
+        let movie = Stream::load(&assets.file(folder, name)).ok()?;
+        if let Some((key, wav)) = &movie.audio {
+            self.sounds.play_wav(key, wav).await;
+        }
+        Some(movie)
+    }
+
     /// The game's start: the credits and title, then the opening.
     pub async fn intro(&mut self, assets: &GameAssets) {
-        match Clip::load(&assets.file("Opening", "OpenCreditsAndTitle")) {
-            Ok(clip) => {
-                self.start_audio(&clip).await;
-                self.stage = Stage::Credits(Player::new(clip));
-            }
-            Err(_) => self.opening(assets).await,
+        match self.start(assets, "Opening", "OpenCreditsAndTitle").await {
+            Some(movie) => self.stage = Stage::Title(movie),
+            None => self.opening(assets).await,
         }
     }
 
     async fn opening(&mut self, assets: &GameAssets) {
         self.sounds.stop();
-        match Clip::load(&assets.file("Opening", "OPENING")) {
-            Ok(clip) => {
-                self.start_audio(&clip).await;
-                self.stage = Stage::Opening(Player::new(clip));
-            }
-            Err(_) => self.menu(assets).await,
+        match self.start(assets, "Opening", "OPENING").await {
+            Some(movie) => self.stage = Stage::Opening(movie),
+            None => self.menu(assets).await,
         }
     }
 
@@ -120,16 +139,29 @@ impl TitleScreen {
         }
     }
 
-    /// Leaving: the credits segue, then quit (Lingo's CleanUpAndQuit).
+    /// Leaving: the credits, then quit (Lingo's CleanUpAndQuit). The PC's
+    /// scrolling credits with their tune looping, else the Mac's.
     pub async fn leave(&mut self, assets: &GameAssets) {
         self.sounds.stop();
         self.choice = None;
-        match Clip::load(&assets.file("Segues", "Credits")) {
-            Ok(clip) => {
-                self.start_audio(&clip).await;
-                self.stage = Stage::Leaving(Player::new(clip));
+        let pc = assets.files.pc_file("SEGUES", "CREDITS").and_then(|p| Stream::load(&p).ok());
+        let movie = match pc {
+            Some(movie) => {
+                if let Some(wav) = assets.files.pc_file("OPENING", "CREDTUNE.WAV").and_then(|p| std::fs::read(p).ok()) {
+                    self.sounds.loop_wav("CREDTUNE.WAV", &wav).await;
+                }
+                Some(movie)
             }
-            Err(_) => self.stage = Stage::Done,
+            None => self.start(assets, "Segues", "Credits").await,
+        };
+        self.stage = movie.map_or(Stage::Done, Stage::Credits);
+    }
+
+    /// About's card; the theme plays on.
+    async fn about(&mut self, assets: &GameAssets) {
+        match self.start(assets, "Segues", "About").await {
+            Some(card) => self.stage = Stage::About(card),
+            None => self.sounds.play_over("SysBeeb").await,
         }
     }
 
@@ -141,12 +173,6 @@ impl TitleScreen {
         choice
     }
 
-    async fn start_audio(&mut self, clip: &Clip) {
-        if let Some((key, wav)) = &clip.audio {
-            self.sounds.play_wav(key, wav).await;
-        }
-    }
-
     fn sprite_hit(&self, ch: usize, x: f32, y: f32) -> bool {
         self.menu
             .sprite(ch)
@@ -154,7 +180,7 @@ impl TitleScreen {
             .is_some_and(|(img, at)| img.hit(at, x, y))
     }
 
-    /// Skip a movie, close About, or press a menu button.
+    /// Skip a movie, or press a menu button.
     pub fn press(&mut self, x: f32, y: f32) {
         match self.stage {
             Stage::Menu if self.pressed.is_none() => {
@@ -168,21 +194,19 @@ impl TitleScreen {
         }
     }
 
-    /// Movies and About give way to any key or click.
+    /// A key or click: movies end; About closes.
     fn skip(&mut self) {
         match &mut self.stage {
-            Stage::Credits(p) | Stage::Opening(p) | Stage::Leaving(p) => p.finish(),
-            Stage::About(_) => self.stage = Stage::Menu,
+            Stage::Title(m) | Stage::Opening(m) => m.finish(),
+            // Quitting quits at once.
+            Stage::Credits(_) => self.stage = Stage::Done,
+            Stage::About(_) => self.back_to_menu = true,
             _ => {}
         }
     }
 
     pub fn key(&mut self, key: KeyCode) {
         if !matches!(self.stage, Stage::Menu) {
-            // Esc while leaving quits at once.
-            if key == KeyCode::Escape && matches!(self.stage, Stage::Leaving(_)) {
-                self.stage = Stage::Done;
-            }
             self.skip();
             return;
         }
@@ -205,22 +229,27 @@ impl TitleScreen {
     }
 
     pub async fn update(&mut self, assets: &GameAssets, dt: f32) {
+        // Back from About: the theme was playing all along.
+        if std::mem::take(&mut self.back_to_menu) {
+            self.stage = Stage::Menu;
+            return;
+        }
         match &mut self.stage {
-            Stage::Credits(p) => {
-                if p.update(dt) {
+            Stage::Title(m) => {
+                if m.update(dt) {
                     self.opening(assets).await;
                 }
             }
-            Stage::Opening(p) => {
-                if p.update(dt) {
+            Stage::Opening(m) => {
+                if m.update(dt) {
                     self.menu(assets).await;
                 }
             }
-            Stage::About(p) => {
-                p.update(dt);
+            Stage::About(card) => {
+                card.update(dt);
             }
-            Stage::Leaving(p) => {
-                if p.update(dt) {
+            Stage::Credits(movie) => {
+                if movie.update(dt) {
                     self.stage = Stage::Done;
                 }
             }
@@ -249,17 +278,12 @@ impl TitleScreen {
                     self.sounds.stop();
                     self.choice = Some(Choice::Load(text));
                 }
-                None => self.sounds.play("SysBeeb").await,
+                // No saved game: a beep over the music.
+                None => self.sounds.play_over("SysBeeb").await,
             },
             CH_REPLAY => self.opening(assets).await,
             CH_QUIT => self.leave(assets).await,
-            CH_ABOUT => match Clip::load(&assets.file("Segues", "About")) {
-                Ok(clip) => {
-                    self.start_audio(&clip).await;
-                    self.stage = Stage::About(Player::new(clip));
-                }
-                Err(_) => self.sounds.play("SysBeeb").await,
-            },
+            CH_ABOUT => self.about(assets).await,
             _ => {}
         }
     }
@@ -270,40 +294,55 @@ impl TitleScreen {
         }
     }
 
-    fn draw_movie(canvas: &mut Canvas, p: &Player, at: (i32, i32)) {
-        if let Some(frame) = p.current() {
-            let w = p.clip.width;
+    fn draw_movie(canvas: &mut Canvas, m: &Stream, at: (i32, i32)) {
+        if let Some(frame) = m.current() {
+            let w = m.width();
             let h = frame.len() / 4 / w.max(1);
             canvas.blit(frame, w, (0, 0, w, h), at.0, at.1, false);
         }
     }
 
+    /// The menu over the bridge (with the selected skill and a pressed
+    /// button lit).
+    fn draw_menu(&self, canvas: &mut Canvas) {
+        self.draw_bridge(canvas);
+        for (i, s) in self.menu.sprites.iter().enumerate() {
+            let ch = i + 1;
+            if s.kind != 1 {
+                continue;
+            }
+            let lit = (ch == CH_SKILL + self.skill as usize - 1) || self.pressed.is_some_and(|(b, _)| b == ch);
+            if let Some(img) = self.cast.get(s.cast + lit as u16)
+                && img.width > 1
+            {
+                canvas.draw(img, (s.loc_h as i32, s.loc_v as i32), s.ink != 0);
+            }
+        }
+    }
+
+    /// About or the credits in their window over the menu.
+    fn draw_window(&self, canvas: &mut Canvas, m: &Stream) {
+        self.draw_menu(canvas);
+        let (x, y, w, h) = WINDOW;
+        canvas.fill(x, y, x + w, y + h, [0, 0, 0]);
+        canvas.fill(x, y, x + w, y + 1, WINDOW_LIGHT);
+        canvas.fill(x, y + 1, x + w, y + 2, WINDOW_MID);
+        canvas.fill(x, y, x + 2, y + h, WINDOW_MID);
+        canvas.fill(x, y + h - 1, x + w, y + h, WINDOW_DARK);
+        canvas.fill(x + w - 1, y, x + w, y + h, WINDOW_DARK);
+        Self::draw_movie(canvas, m, WINDOW_MOVIE_AT);
+    }
+
     pub fn draw(&self, canvas: &mut Canvas) {
         canvas.fill(0, 0, canvas.width as i32, canvas.height as i32, [0, 0, 0]);
         match &self.stage {
-            Stage::Credits(p) => Self::draw_movie(canvas, p, (0, 0)),
-            Stage::Opening(p) => {
+            Stage::Title(m) => Self::draw_movie(canvas, m, (0, 0)),
+            Stage::Opening(m) => {
                 self.draw_bridge(canvas);
-                Self::draw_movie(canvas, p, OPENING_AT);
+                Self::draw_movie(canvas, m, OPENING_AT);
             }
-            Stage::About(p) => Self::draw_movie(canvas, p, SEGUE_AT),
-            Stage::Leaving(p) => Self::draw_movie(canvas, p, SEGUE_AT),
-            Stage::Menu => {
-                self.draw_bridge(canvas);
-                for (i, s) in self.menu.sprites.iter().enumerate() {
-                    let ch = i + 1;
-                    if s.kind != 1 {
-                        continue;
-                    }
-                    // The selected skill and a pressed button show lit (+1).
-                    let lit = (ch == CH_SKILL + self.skill as usize - 1) || self.pressed.is_some_and(|(b, _)| b == ch);
-                    if let Some(img) = self.cast.get(s.cast + lit as u16)
-                        && img.width > 1
-                    {
-                        canvas.draw(img, (s.loc_h as i32, s.loc_v as i32), s.ink != 0);
-                    }
-                }
-            }
+            Stage::About(m) | Stage::Credits(m) => self.draw_window(canvas, m),
+            Stage::Menu => self.draw_menu(canvas),
             Stage::Done => {}
         }
     }

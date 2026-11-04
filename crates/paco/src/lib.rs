@@ -26,7 +26,7 @@ pub mod palette;
 pub mod reader;
 pub mod rle;
 
-pub use decoder::{Decoder, Frame};
+pub use decoder::{Decoder, Frame, Stream};
 pub use error::{PacoError, Result};
 pub use header::{CavfHeader, ChunkHeader};
 pub use movie::{Audio, Chunk, Movie};

@@ -301,6 +301,7 @@ dependencies = [
  "director",
  "helix-core",
  "helixdb",
+ "macformats",
  "macroquad",
  "paco",
  "segafilm",
