@@ -115,7 +115,7 @@ and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevato
 the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not in the original,
 S scan, X arm, C probe controls, M map mode, Enter on the keypad. Space or the Jam button jams
 the defender; N shows the notes; P pauses; Esc brings up the quit dialog (Q quit, S save and
-quit, Esc cancel). The notes use the default font here; the original draws them in 9-point
+quit, Esc cancel). Drag the knob on the bottom bar (title screen or game) to set the volume. The notes use the default font here; the original draws them in 9-point
 Geneva. F pixel-perfect scaling, H debug overlay. On the title screen: 1-5 skill, Enter begin,
 Esc quit; a click or key skips the opening movies. `--skill` picks the title's starting skill,
 `--skip-title` goes straight into a game. Computer codes show in a small built-in font; the

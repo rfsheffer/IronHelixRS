@@ -24,6 +24,8 @@ use crate::sound::Sounds;
 use crate::sprites::{Canvas, Cast};
 use crate::video::Stream;
 
+/// The volume knob's sprite channel.
+const CH_VOLUME: usize = 5;
 /// Sprite channels of the title menu: skill levels 1-5, then the buttons.
 const CH_SKILL: usize = 10;
 const CH_BEGIN: usize = 15;
@@ -79,6 +81,10 @@ pub struct TitleScreen {
     choice: Option<Choice>,
     /// About was closed: the menu on the next update.
     back_to_menu: bool,
+    /// The volume slider's knob (on the menu, as in the game).
+    slider: crate::volume::Slider,
+    /// The knob was let go: the sound check plays.
+    sound_check: bool,
 }
 
 impl TitleScreen {
@@ -97,6 +103,8 @@ impl TitleScreen {
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             choice: None,
             back_to_menu: false,
+            slider: Default::default(),
+            sound_check: false,
         })
     }
 
@@ -180,8 +188,11 @@ impl TitleScreen {
             .is_some_and(|(img, at)| img.hit(at, x, y))
     }
 
-    /// Skip a movie, or press a menu button.
+    /// Skip a movie, or press a menu button (or the volume knob).
     pub fn press(&mut self, x: f32, y: f32) {
+        if matches!(self.stage, Stage::Menu) && self.slider.press(&self.cast, x, y) {
+            return;
+        }
         match self.stage {
             Stage::Menu if self.pressed.is_none() => {
                 if let Some(level) = (0..5).find(|&i| self.sprite_hit(CH_SKILL + i, x, y)) {
@@ -191,6 +202,19 @@ impl TitleScreen {
                 }
             }
             _ => self.skip(),
+        }
+    }
+
+    /// The pointer moving while down: the volume knob.
+    pub fn drag(&mut self, x: f32) {
+        if self.slider.drag(x) {
+            self.sounds.volume_changed();
+        }
+    }
+
+    pub fn release(&mut self) {
+        if self.slider.release() {
+            self.sound_check = true;
         }
     }
 
@@ -229,6 +253,9 @@ impl TitleScreen {
     }
 
     pub async fn update(&mut self, assets: &GameAssets, dt: f32) {
+        if std::mem::take(&mut self.sound_check) {
+            self.sounds.play_over("SoundCheck").await;
+        }
         // Back from About: the theme was playing all along.
         if std::mem::take(&mut self.back_to_menu) {
             self.stage = Stage::Menu;
@@ -309,6 +336,10 @@ impl TitleScreen {
         for (i, s) in self.menu.sprites.iter().enumerate() {
             let ch = i + 1;
             if s.kind != 1 {
+                continue;
+            }
+            if ch == CH_VOLUME {
+                crate::volume::Slider::draw(&self.cast, canvas);
                 continue;
             }
             let lit = (ch == CH_SKILL + self.skill as usize - 1) || self.pressed.is_some_and(|(b, _)| b == ch);

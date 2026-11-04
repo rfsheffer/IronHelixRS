@@ -25,6 +25,7 @@ mod sound;
 mod sprites;
 mod title;
 mod video;
+mod volume;
 
 use assets::{GameAssets, Paths};
 use layout::Layout;
@@ -377,8 +378,10 @@ async fn main() {
                     }
                 }
                 for input in &inputs {
-                    if let Input::Press(x, y) = input {
-                        title.press(*x, *y);
+                    match *input {
+                        Input::Press(x, y) => title.press(x, y),
+                        Input::Drag(x, _) => title.drag(x),
+                        Input::Release => title.release(),
                     }
                 }
                 // Autoplay with `--title`: a step every half second.

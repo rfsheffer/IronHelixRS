@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use macroquad::audio::{PlaySoundParams, Sound, load_sound_from_bytes, play_sound, play_sound_once, stop_sound};
+use macroquad::audio::{PlaySoundParams, Sound, load_sound_from_bytes, play_sound, set_sound_volume, stop_sound};
 
 /// Convert an AIFF file to an in-memory WAV, which macroquad can play.
 /// Handles the uncompressed mono/stereo 8- and 16-bit files the game ships.
@@ -78,6 +78,11 @@ fn extended_to_u32(b: &[u8]) -> u32 {
     value.round() as u32
 }
 
+/// Start a sound at the volume slider's setting.
+fn play(s: &Sound, looped: bool) {
+    play_sound(s, PlaySoundParams { looped, volume: crate::volume::volume() });
+}
+
 /// The sounds, loaded on first use: an installed sound by that name, else a
 /// sound member (`cast`, name -> WAV). Like the original, one sound plays at
 /// a time: starting a new one stops the last.
@@ -91,6 +96,13 @@ pub struct Sounds {
 impl Sounds {
     pub fn new(folder: PathBuf, cast: HashMap<String, Vec<u8>>) -> Self {
         Self { folder, cast, loaded: HashMap::new(), playing: None }
+    }
+
+    /// The volume slider moved: the sound playing follows it.
+    pub fn volume_changed(&self) {
+        if let Some(Some(s)) = self.playing.as_ref().and_then(|p| self.loaded.get(p)) {
+            set_sound_volume(s, crate::volume::volume());
+        }
     }
 
     pub fn stop(&mut self) {
@@ -109,7 +121,7 @@ impl Sounds {
         }
         self.stop();
         if let Some(Some(s)) = self.loaded.get(key) {
-            play_sound_once(s);
+            play(s, false);
             self.playing = Some(key.to_string());
         }
     }
@@ -123,7 +135,7 @@ impl Sounds {
         }
         self.stop();
         if let Some(Some(s)) = self.loaded.get(key) {
-            play_sound(s, PlaySoundParams { looped: true, volume: 1.0 });
+            play(s, true);
             self.playing = Some(key.to_string());
         }
     }
@@ -133,7 +145,7 @@ impl Sounds {
     pub async fn play_over(&mut self, name: &str) {
         self.load(name).await;
         if let Some(Some(s)) = self.loaded.get(name) {
-            play_sound_once(s);
+            play(s, false);
         }
     }
 
@@ -145,7 +157,7 @@ impl Sounds {
             stop_sound(s);
         }
         if let Some(Some(s)) = self.loaded.get(name) {
-            play_sound_once(s);
+            play(s, false);
             self.playing = Some(name.to_string());
         }
     }

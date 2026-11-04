@@ -27,6 +27,7 @@ use crate::video::{Clip, Player};
 // Sprite channels.
 const CH_VIEW: usize = 1;
 const CH_ARM: usize = 2;
+const CH_VOLUME: usize = 5;
 const CH_LAMP: usize = 4;
 const CH_MAP: usize = 6;
 const CH_PROBE_ICON: usize = 7;
@@ -62,6 +63,9 @@ const CAST_AUTO_SCAN_LAMP: u16 = 133; // off; +2 on
 const CAST_CONTROLS_INVENTORY: u16 = 143;
 const CAST_CREW: u16 = 146; // + (DNA id - 1) * 2, + 1 selected
 const CAST_EMPTY_SCREEN: u16 = 168;
+/// The view on the death, entering and win screens (score frames Segue,
+/// Entering and WinFrame), where the game's view window shows cast 39.
+const CAST_BLANK_MONITOR: u16 = 41;
 const CAST_SCAN_INTERFACE: u16 = 169;
 const CAST_COMPUTER_HILITE: u16 = 177; // square row; +1 oval row; +item-3 bottom bar
 const CAST_ETA_SHIP: u16 = 214;
@@ -202,6 +206,10 @@ pub struct GameScreen {
     pressed: Option<usize>,
     hilite: Option<(Hilite, f32)>,
     dragging: bool,
+    /// The volume slider's knob.
+    slider: crate::volume::Slider,
+    /// The knob was let go: the sound check plays.
+    sound_check: bool,
     sounds: Sounds,
     pub status: String,
     /// Paused (Lingo's PauseGame): any key or click carries on.
@@ -296,6 +304,8 @@ impl GameScreen {
             pressed: None,
             hilite: None,
             dragging: false,
+            slider: Default::default(),
+            sound_check: false,
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             status: String::new(),
             paused: false,
@@ -531,6 +541,10 @@ impl GameScreen {
             }
             return;
         }
+        // The volume knob works through movies too.
+        if self.slider.press(&self.cast, x, y) {
+            return;
+        }
         if self.playing() {
             return;
         }
@@ -656,12 +670,20 @@ impl GameScreen {
 
     /// The mouse or touch moving while down.
     pub fn drag(&mut self, x: f32, y: f32) {
+        if self.slider.drag(x) {
+            self.sounds.volume_changed();
+            return;
+        }
         if self.dragging {
             self.act(Action::ViewDrag(x as i32, y as i32), None);
         }
     }
 
     pub fn release(&mut self) {
+        if self.slider.release() {
+            self.sound_check = true;
+            return;
+        }
         if let Some(Some(lit)) = self.quit_dialog {
             self.quit_choice(lit);
             return;
@@ -821,6 +843,10 @@ impl GameScreen {
             if *t <= 0.0 {
                 self.toast = None;
             }
+        }
+        // The volume knob was let go (over whatever is playing).
+        if std::mem::take(&mut self.sound_check) {
+            self.sounds.play_over("SoundCheck").await;
         }
         // Paused, or the quit dialog up: everything waits, the clock too.
         if self.paused || self.quit_dialog.is_some() {
@@ -1064,6 +1090,7 @@ impl GameScreen {
                 ch,
                 CH_VIEW
                     | CH_ARM
+                    | CH_VOLUME
                     | CH_LAMP
                     | CH_MAP
                     | CH_PROBE_ICON
@@ -1079,7 +1106,11 @@ impl GameScreen {
 
         // The view window, with the scan box and the arm (channel 2) over it;
         // the interface frame (channel 3) covers what reaches outside.
-        if let (Some(img), Some((pixels, width)), None) =
+        if self.entering && self.view.is_none() {
+            // The death, entering and win screens blank the view (a movie
+            // there, like the probe entering, plays over it).
+            self.draw_cast(canvas, CAST_BLANK_MONITOR, loc(&self.frame, CH_VIEW), false);
+        } else if let (Some(img), Some((pixels, width)), None) =
             (self.cast.get(self.frame.sprite(CH_VIEW).map_or(0, |s| s.cast)), self.view_frame(), self.reboot)
         {
             let (left, top) = img.top_left(loc(&self.frame, CH_VIEW));
@@ -1113,6 +1144,7 @@ impl GameScreen {
                 canvas.draw(img, (s.loc_h as i32, s.loc_v as i32), s.ink != 0);
             }
         }
+        crate::volume::Slider::draw(&self.cast, canvas);
         if self.view.is_none()
             && let Some((frame, at)) = scan.marker
         {

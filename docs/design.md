@@ -556,6 +556,17 @@ cast 281 with its buttons 282 over the control screen (lit 284 Quit if x < 237, 
 246-312, 288 Save > 326). Pause closes the scanner, arm and controls and shows `Segue` (225)
 with `Game Paused` (228).
 
+**Volume slider** (Lingo's VolumeSet; the knob is cast 256 in sprite channel 5, on the title
+screen and in the game): dragging the knob moves it between loc 347 and 439; letting go plays
+`SoundCheck` and sets the Mac's speaker volume to `7 × (loc − 347) / 94` (0 turns sound off). The
+knob starts at 394 (saved with the game), which meant nothing until it moved. The new engine's
+knob sets the game's own volume, silent at the left and full at the right, for every sound
+including the one playing, and starts at the right.
+
+The death, entering and win screens (score frames Segue, Entering, WinFrame) put
+`BlankMonitor` (cast 41) in the view, so the probe's last picture doesn't linger there; movies
+in the view (the probe entering) play over it.
+
 ### 12.5 Save game contents ✅
 
 Probe number, defender node, probe node, facing, phase, trapped flag; volume, energy, minutes
