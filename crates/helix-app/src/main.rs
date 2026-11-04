@@ -205,6 +205,8 @@ async fn show_error(message: String) {
 enum Step {
     Key(KeyCode),
     Click(f32, f32),
+    /// A pause (`_`, half a second), for recordings.
+    Wait,
 }
 
 /// `FFLRO2(380,60)A`: letters are keys (F/B forward/back, L/R turn, U/D
@@ -223,6 +225,10 @@ fn parse_autoplay(s: &str) -> std::collections::VecDeque<Step> {
             {
                 steps.push_back(Step::Click(x, y));
             }
+            continue;
+        }
+        if c == '_' {
+            steps.push_back(Step::Wait);
             continue;
         }
         let key = match c.to_ascii_uppercase() {
@@ -293,7 +299,10 @@ async fn main() {
     let mut mode = if let Some(ending) = assets.ending.as_deref().filter(|_| play_ending).and_then(|p| Ending::load(p).ok()) {
         Mode::Ending(Box::new(ending))
     } else if assets.skip_title {
-        match GameScreen::new(&assets, assets.skill, seed, Start::Plain) {
+        // `--load <file>` (testing): start from a saved game.
+        let load = std::env::args().skip_while(|a| a != "--load").nth(1).and_then(|f| std::fs::read_to_string(f).ok());
+        let start = load.map_or(Start::Plain, Start::Load);
+        match GameScreen::new(&assets, assets.skill, seed, start) {
             Ok(game) => Mode::Game(Box::new(game)),
             Err(e) => {
                 show_error(e).await;
@@ -331,6 +340,15 @@ async fn main() {
     let autoplaying = !autoplay.is_empty();
     let shot_frame: Option<u32> = args.windows(2).find(|p| p[0] == "--screenshot-frame").and_then(|p| p[1].parse().ok());
     let mut idle_frames = 0u32;
+    // `--record <dir>`: the stage as numbered PNGs, 15 a second of play (for
+    // making GIFs), until the autoplay is done.
+    let record: Option<std::path::PathBuf> = args.windows(2).find(|p| p[0] == "--record").map(|p| p[1].clone().into());
+    if let Some(dir) = &record {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let (mut record_time, mut recorded) = (0.0f32, 0u32);
+    // An autoplay pause (`_`) counting down.
+    let mut pause = 0.0f32;
 
     loop {
         if is_key_pressed(KeyCode::F) {
@@ -389,7 +407,7 @@ async fn main() {
                     match autoplay.pop_front() {
                         Some(Step::Key(key)) => title.key(key),
                         Some(Step::Click(x, y)) => title.press(x, y),
-                        None => {}
+                        Some(Step::Wait) | None => {}
                     }
                 }
                 title.update(&assets, dt).await;
@@ -423,13 +441,16 @@ async fn main() {
                         game.key(key);
                     }
                 }
-                if !game.busy() {
+                if pause > 0.0 {
+                    pause -= dt;
+                } else if !game.busy() {
                     match autoplay.pop_front() {
                         Some(Step::Key(key)) => game.key(key),
                         Some(Step::Click(x, y)) => {
                             game.press(x, y);
                             game.release();
                         }
+                        Some(Step::Wait) => pause = 0.5,
                         None => {}
                     }
                     idle_frames += 1;
@@ -480,6 +501,18 @@ async fn main() {
             mode = m;
         }
         stage_tex.update(&stage);
+        if let Some(dir) = &record {
+            record_time += dt;
+            while record_time >= 1.0 / 15.0 {
+                record_time -= 1.0 / 15.0;
+                recorded += 1;
+                // export_png writes rows bottom up (it expects screen data), so
+                // hand it the stage flipped.
+                let row = assets.stage_w * 4;
+                let flipped = Image { bytes: stage.bytes.chunks(row).rev().flatten().copied().collect(), ..stage.clone() };
+                flipped.export_png(&dir.join(format!("{recorded:05}.png")).to_string_lossy());
+            }
+        }
 
         clear_background(BLACK);
         draw_panels(&layout, side_art.as_ref());
@@ -515,6 +548,9 @@ async fn main() {
             && done
         {
             get_screen_data().export_png(&path.to_string_lossy());
+            break;
+        }
+        if record.is_some() && autoplaying && autoplay.is_empty() && idle_frames > 20 {
             break;
         }
 

@@ -4,8 +4,18 @@ A Rust reimplementation of the engine for *Iron Helix* (Drew Pictures / Spectrum
 built by reverse engineering the original game. It runs on data from your own copy of the game;
 no game content lives in this repository.
 
-The long-term goal is a "definitive edition" that pulls the best assets from the Mac, Windows
-and Sega CD releases (including the Sega CD's extra ending video).
+**The game is complete:** every part of the original plays, from the opening and title screen
+through to both endings, and it's now in testing to make it perfect. It's a "definitive edition"
+that takes the best of the Mac, Windows and Sega CD releases: the Mac game as the base, the PC's
+hidden rooms and scrolling credits, and the Sega CD's theme music and extended ending.
+
+## In action
+
+| Moving through the ship | Scanning and taking DNA |
+|---|---|
+| ![Walking the deck 4 corridor, opening the elevator and riding it up to deck 3](docs/media/movement.gif) | ![Scanning a specimen: the enhanced view, acquiring its DNA, and the probe's inventory](docs/media/scanning.gif) |
+| **Using a computer** | **A video clue** |
+| ![Docking the probe arm at a port and browsing the ship's computer](docs/media/computer.gif) | ![A video message playing from a ship's computer](docs/media/videoclue.gif) |
 
 ## Layout
 
@@ -126,7 +136,9 @@ sequence of steps in a game (with `--title`, starting at the title screen, a ste
 second: a click there skips a movie) (F/B forward/back, L/R turn, U/D ladder, O door, 1-6
 elevator, M map mode, P phase, S scan, X arm, C controls, K click the scan point (or, with the arm out, the port), A
 acquire, G grant DNA 01/02/10 and skip to phase 2 like the original's debug keys, Y be caught by
-the defender, J jam, N notes, digits on the keypad, `(x,y)` a click at stage coordinates);
+the defender, J jam, N notes, digits on the keypad, `(x,y)` a click at stage coordinates, `_` a
+half-second pause); `--load <file>` starts from a saved game; `--record <dir>` saves the stage as
+numbered PNGs, 15 a second, until the autoplay is done (for making GIFs with ffmpeg);
 `--screenshot <png>` saves the screen (after the autoplay, or after a few seconds; or at
 `--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--play-ending` plays the
 Sega CD ending at once; `--debug` starts with the overlay on (skill, energy, DNA kit, minutes
