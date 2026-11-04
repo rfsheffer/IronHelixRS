@@ -668,6 +668,16 @@ impl Defender {
         self.advance(rng, skill, probe);
     }
 
+    /// The nodes a plan from Def line `from` toward `target` would visit,
+    /// or None when the search gives up as too long (for tools).
+    pub fn route(&self, from: usize, target: &str) -> Option<Vec<String>> {
+        let mut d = Defender::new(self.data.clone());
+        d.line = from;
+        let (path, _, too_long) = d.search(target);
+        d.path = path.into();
+        (!too_long).then(|| d.plan())
+    }
+
     /// Its planned path's lines, for tools and the debug overlay.
     pub fn plan(&self) -> Vec<String> {
         let mut line = self.line as i64;

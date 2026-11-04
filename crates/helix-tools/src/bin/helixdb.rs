@@ -51,6 +51,10 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Plan the defender from every Def node to every node and report the
+    /// plans that never pass through their target. (Plans end one step past
+    /// it, across its door, by design.)
+    Paths { app: PathBuf },
     /// Explore every navigation state reachable from the start through the
     /// game rules (helix-core) and check every movie and clip they ask for.
     Walk {
@@ -76,6 +80,7 @@ fn main() -> Result<()> {
         Command::Nodes { app, level } => nodes(&load(&app)?, level),
         Command::Videos { app, nav } => videos(&load(&app)?, &nav),
         Command::Defender { app, steps, seed } => defender(load(&app)?, steps, seed),
+        Command::Paths { app } => paths(load(&app)?),
         Command::Walk { app, files, pc } => {
             let mut g = load(&app)?;
             if let Some(pc) = &pc {
@@ -124,6 +129,32 @@ fn defender(g: GameData, steps: usize, seed: u64) -> Result<()> {
     println!("{taken} steps in {:.0} minutes of play, {bad} off the Def table, longest plan {longest}", ticks as f64 / 30.0 / 60.0);
     println!("steps by deck: {decks:?}");
     println!("caught the idle probe {caught} times");
+    Ok(())
+}
+
+fn paths(g: GameData) -> Result<()> {
+    use helix_core::{DefenderData, Game, Navigator};
+    use std::collections::BTreeMap;
+
+    let game = Game::new(Navigator::new(g.nav.clone()), 1, 1).with_defender(DefenderData::new(&g.defender, &g.deaths));
+    let d = game.defender();
+    // Targets: every node the probe can stand on that the Def table has (not ladders).
+    let targets: Vec<&str> = g.defender.iter().map(|n| n.id.as_str()).filter(|id| !id.contains('L')).collect();
+    let (mut ok, mut gave_up) = (0, 0);
+    let mut wrong: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for from in &g.defender {
+        for &to in &targets {
+            match d.route(from.line, to) {
+                Some(visits) if from.id == to || visits.iter().any(|v| v == to) => ok += 1,
+                Some(visits) => wrong.entry(to.to_string()).or_default().push(format!("{} -> {}", from.id, visits.last().map_or("(stays)", String::as_str))),
+                None => gave_up += 1,
+            }
+        }
+    }
+    println!("{ok} plans reach their target, {gave_up} give up as too long");
+    for (to, misses) in &wrong {
+        println!("to {to}: {} miss, e.g. {}", misses.len(), misses.iter().take(3).cloned().collect::<Vec<_>>().join(", "));
+    }
     Ok(())
 }
 

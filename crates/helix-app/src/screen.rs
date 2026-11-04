@@ -828,12 +828,11 @@ impl GameScreen {
         }
         // The 90-minute clock runs in real time, through movies too.
         if !self.game_over {
-            for e in self.game.pass_time(dt) {
-                match e {
-                    Effect::Sound(s) => self.sounds.play(&s).await,
-                    e => self.queue.push_back(e),
-                }
+            let (now, later) = split_sounds(self.game.pass_time(dt));
+            for s in now {
+                self.sounds.play(&s).await;
             }
+            self.queue.extend(later);
         }
         // The marker moves to a new deck at once and slides once a move's
         // movie is over.
@@ -868,13 +867,11 @@ impl GameScreen {
                 if !ticking {
                     continue;
                 }
-                for e in self.game.tick() {
-                    match e {
-                        // Blips play at once rather than waiting their turn.
-                        Effect::Sound(s) => self.sounds.play(&s).await,
-                        e => self.queue.push_back(e),
-                    }
+                let (now, later) = split_sounds(self.game.tick());
+                for s in now {
+                    self.sounds.play(&s).await;
                 }
+                self.queue.extend(later);
             }
         }
         loop {
@@ -1381,6 +1378,17 @@ impl GameScreen {
     }
 }
 
+/// A tick's effects: the sounds that lead them (scan blips, warning beeps)
+/// play at once; from the first other effect on, everything waits its turn
+/// in order, so a sequence's sounds (a death's "Static", the next probe's
+/// "Entering" music) play with their movies.
+fn split_sounds(fx: Vec<Effect>) -> (Vec<String>, Vec<Effect>) {
+    let lead = fx.iter().take_while(|e| matches!(e, Effect::Sound(_))).count();
+    let mut fx = fx.into_iter();
+    let now = fx.by_ref().take(lead).filter_map(|e| if let Effect::Sound(s) = e { Some(s) } else { None }).collect();
+    (now, fx.collect())
+}
+
 /// Digits (and spaces) in a small 5x7 font, standing in for the screens'
 /// text members (codes and keypad entry), in the screen green.
 fn draw_digits(canvas: &mut Canvas, text: &str, at: (i32, i32)) {
@@ -1409,5 +1417,27 @@ fn draw_digits(canvas: &mut Canvas, text: &str, at: (i32, i32)) {
             }
         }
         x += 7;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_leading_sounds_play_at_once() {
+        let blip = Effect::Sound("Blip".into());
+        assert_eq!(split_sounds(vec![blip.clone(), blip.clone()]), (vec!["Blip".to_string(), "Blip".to_string()], vec![]));
+        // A catch during a tick: its music waits for the movie before it.
+        let death = vec![
+            Effect::Sound("Warning One".into()),
+            Effect::Video { folder: "Navigation/L1".into(), name: "1.02.N.1".into(), sound: None },
+            Effect::Wait(2.0),
+            Effect::Sound("Entering".into()),
+            Effect::Segue { folder: "Opening".into(), name: "Entering Ship".into() },
+        ];
+        let (now, later) = split_sounds(death.clone());
+        assert_eq!(now, ["Warning One"]);
+        assert_eq!(later, death[1..]);
     }
 }

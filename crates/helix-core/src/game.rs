@@ -559,7 +559,12 @@ impl Game {
         let probe = self.probe();
         let moved = self.nav.line() != line && !matches!(action, NavAction::Elevator(_));
         let movie = fx.iter().any(|e| matches!(e, Effect::Video { .. }));
-        let events = if self.nav.door_open() != door {
+        // An elevator ride ends with the door opening on the new deck, which
+        // the sensors notice like any door (OperateElevator ends in
+        // DoorAction): the warning is checked again there and the defender
+        // heads for the new floor. The door is open before and after.
+        let rode = matches!(action, NavAction::Elevator(_)) && self.nav.line() != line;
+        let events = if self.nav.door_open() != door || rode {
             // The node beyond the door, for the sensors.
             let n = self.nav.node();
             let beyond = n.exit(self.nav.facing()).and_then(|e| self.nav.graph().step(n, e.offset)).map(|b| b.id.clone());
@@ -1100,6 +1105,49 @@ mod tests {
         let fx = g.pass_time(60.0);
         assert!(fx.contains(&Effect::GameOver));
         assert!(g.pass_time(60.0).is_empty());
+    }
+
+    /// Two decks, each with a node west of an elevator (not game data):
+    /// node lines 2-3 are 1.03 and 1.04.E, 4-5 are 2.01 and 2.02.E. The
+    /// defender's table puts 2.01 (its start, line 5) at the root with
+    /// 2.02.E beside it and has no way to deck 1, so opening the door there
+    /// sends it nowhere. `sees_in` gives 2.01 a view into the open elevator.
+    fn elevator_game(sees_in: bool) -> Game {
+        let node = Table::parse(
+            "** Node\n\
+             1.03,0,1,0,0,0,0,#,01,#,#,0,0,\n\
+             1.04.E,0,0,0,-1,0,0,#,#,#,01,2,0,\n\
+             2.01,0,1,0,0,0,0,#,01,#,#,0,0,\n\
+             2.02.E,0,0,0,-1,0,0,#,#,#,01,0,-2,",
+        );
+        let empty = Table::parse("** x");
+        let nav = Navigator::at(NavGraph::build(&node, &empty, &empty, &[]), 3, Direction::West);
+        let sight = if sees_in { "*2.01*3-2.02.E*" } else { "*2.01*" };
+        let def = Table::parse(&format!(
+            "** Def\n1.03,0,0,0,0,0,*1.03*,##,3\n1.04.E,0,0,0,0,0,*1.04.E*,##,3\n-\n2.01,0,0,1,0,2,{sight},##,1\n2.02.E,-1,0,0,0,0,*2.02.E*,01,1"
+        ));
+        let deaths = Table::parse("*Death\n1.00,");
+        let data = DefenderData::new(&helixdb::defender::parse(&def), &helixdb::death::parse(&deaths));
+        Game::new(nav, 1, 1).with_defender(data)
+    }
+
+    #[test]
+    fn arriving_by_elevator_into_view_is_caught() {
+        let mut g = elevator_game(true);
+        g.act(Action::Nav(NavAction::Door));
+        assert!(g.nav().door_open());
+        let fx = g.act(Action::Nav(NavAction::Elevator(2)));
+        assert!(fx.iter().any(|e| matches!(e, Effect::Segue { name, .. } if name == "DefDeath1")));
+    }
+
+    #[test]
+    fn the_defender_heads_for_the_floor_the_elevator_stops_at() {
+        let mut g = elevator_game(false);
+        g.act(Action::Nav(NavAction::Door));
+        g.act(Action::Nav(NavAction::Elevator(2)));
+        assert_eq!(g.nav().node().id, "2.02.E");
+        // Into the elevator and back out, where it can see in.
+        assert_eq!(g.defender().plan(), ["2.02.E", "2.01"]);
     }
 
 }

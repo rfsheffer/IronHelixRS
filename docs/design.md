@@ -162,6 +162,12 @@ facing S ends facing E; forward from 2.15 facing N ends facing W).
 - Choosing another level: closes the door if open, plays `Elevator2`, then rides one floor per
   100 ticks, stepping the line by the node's **elevator up / down offset** per floor (Node items
   12/13), updating the map each floor; on arrival the door opens.
+- Both door movements count as door actions (`OperateElevator` calls `DoorAction`): on arrival
+  the warning is recomputed (opening into the defender's view kills the probe) and, with the
+  sensors active, the defender plans a path to the new floor. Each deck's elevator is the root
+  of that deck's Def tree, so the defender often passes through elevators on its way elsewhere;
+  plans end one step past their target, across its door, where its sight list sees through the
+  open door. `helixdb paths <app>` checks every Def node's plan to every node.
 
 ### 4.5 After every move ✅
 
@@ -378,7 +384,16 @@ Running an action plays its computer clip and may carry a **task**:
 ### 9.2 Choosing where to go ✅
 
 - **Roaming**: a random node on a *different* level (uniform over that level's node numbers).
-- **Alerted**: towards the probe's node, when a door is opened with door sensors active (§4.3).
+  On arriving it picks another, indefinitely: nothing sends it after the probe by time alone.
+- **Alerted**: towards the probe's node, when a door is opened or closed with door sensors
+  active (§4.3), including an elevator's door opening on arrival (§4.4), unless its current
+  plan already covers both sides of that door.
+- Roaming ends only with an alert, with the probe coming into sight (caught, §9.6), or while it
+  is jammed, trapped or off (§9.5, §9.7). Warnings rise as nodes that see the probe come up on
+  its route (§9.4), but the route itself doesn't change for that.
+- **A new probe** (§10.3): `InitGame` runs again; `InitDBs` puts the defender back at its start
+  (Def line 5, node 1.04) and `InitVars` clears its plan, so its next step picks a random target.
+  It doesn't know where the new probe is until something alerts it.
 
 ### 9.3 Path planning ✅
 
@@ -472,9 +487,10 @@ Door sensors off (§8.5) uses the same 5-minute timer; the sensors come back on 
 ### 10.3 Losing a probe ✅
 
 Segue `Segues:DefDeath<n>` (or `NoEnergy<n>`) for probe n. With probes left: show minutes
-remaining, pause 2 s, the next probe enters (`Opening:Entering Ship` + `Entering Ship PPV`) and
-play restarts from the start position. After the 3rd: `GameOver`, then a random `Video:Lose 1-3`,
-back to the title.
+remaining, pause 2 s, the next probe enters (the `Entering` sound starting with
+`Opening:Entering Ship`, then `Entering Ship PPV`) and play restarts from the start position,
+with the defender back at its own start and roaming (§9.2). After the 3rd: `GameOver`, then a
+random `Video:Lose 1-3`, back to the title.
 
 ---
 
