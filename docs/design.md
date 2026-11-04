@@ -363,7 +363,12 @@ Running an action plays its computer clip and may carry a **task**:
 ### 9.1 When it moves ✅
 
 - **Timer**: every `(6 − skill) × 50 + random(1..150) + 100` ticks (skill 1: ~5.9-8.3 s,
-  skill 5: ~2.5-5 s). The delay is re-rolled every `random(1..10) + 5` steps.
+  skill 5: ~2.5-5 s). The delay is re-rolled every `random(1..10) + 5` steps. It is Director's
+  `timeout`, which counts **time without input**: every key press or click starts it again, so
+  the defender closes in while the player hesitates. (This program also doesn't count time
+  while a movie plays, as the original's modal movie calls didn't.)
+- Turning doesn't check it; moves and doors do. A repeat move (double arrow) is checked at
+  where it stops; the original also checked each node passed on the way.
 - **After player moves**: if it isn't off, jammed or trapped, it also steps once the player has
   made more than `max(4 − skill, 0)` moves since its last step (at skill 4-5, every second move).
 - Each step it follows one entry of its **planned path**; with no plan it picks a new random
@@ -408,6 +413,11 @@ is **jammed** until its next step, which is delayed (400 ticks at skill 1, 250 o
 map icon blinks while jammed.
 
 ### 9.6 Being caught ✅
+
+(Of the 205 death videos the DeathDB can pick, three don't exist on the CD: `2.15.W.1` and
+`2.16.W.1`, where the science lab's curve means the north-facing videos were likely meant, and
+`5.03.S.2`, from a malformed group `D5.06/`. Like the original, the game then goes straight on
+to the fade.)
 
 - The DeathDB row for (probe node, facing) lists groups of conditions. If a group matches the
   defender's last move (from-node → to-node) or a door death at the defender's node, play that
@@ -658,15 +668,18 @@ rules core is done too: `Game` (helix-core `game`, `scan`, `access`) adds cleara
 DNA kit and probe controls, auto and manual scanning with enhance and acquire (§6), energy
 (§10.1) and the phase 1 → 2 change with its bridge movie. The `director` crate also decodes the
 cast's sounds (`snd `) and pictures (`PICT`, the bridge background). The probe arm (§7, helix-core
-`arm`) and the computers (§8, `computer`) are done too, with the defender's side of the computer
-actions (door sensors, bulkheads, turn off, incinerate, eject, phase 4) kept in a small stand-in
-until the defender exists. Next: the defender (§9).
+`arm`), the computers (§8, `computer`) and the defender (§9, `defender`: planning, warnings,
+jamming, door alerts, tasks, being disabled and coming back, being caught) are done, with losing
+probes and game over (§10.3) and the Notes button (§8.3: the notes stamp over the view at (28, 21)
+until the next action). The death, entering, game-over and win sequences use their own score
+frames (Segue, Entering, WinFrame), which have no map, buttons or indicators. Next: probe failure (§10.2), the clock (§12.3), notes, and the game
+flow around it (title, skill choice, save/load, winning).
 
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
 2. **Rules core** (no graphics; step 1 done): a deterministic `Game` with the probe, defender, DNA kit,
    phase, clock and energy; `apply(Action) -> Vec<Effect>` where effects are "play video X",
    "play sound Y", "show message Z". Seeded RNG. Unit tests per section of this document.
-3. **Defender**: path planner over the Def tree (§9.3), timers (§9.1), warning levels (§9.4).
+3. **Defender** (done): path planner over the Def tree (§9.3), timers (§9.1), warning levels (§9.4).
 4. **Probe arm** (§7, done): computers are reached through it.
 5. **Computer** (done): record interpreter (§8), keypad, tasks.
 6. **Presentation**: window, view-window video playback (decoded PACo frames), control screen

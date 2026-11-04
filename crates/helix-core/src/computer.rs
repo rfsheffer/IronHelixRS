@@ -8,6 +8,7 @@
 //! `Trav`; items 1-4 are the menu rows, 5 Prev, 6 Exit, 7 Back, 8 Forward.
 
 use crate::Effect;
+use crate::defender::Sensors;
 use crate::game::Game;
 
 /// Where computer clips play: over the control screen.
@@ -26,6 +27,8 @@ pub struct ComputerData {
     pub clue_lists: Vec<String>,
     /// Note line for each video clue (line N = clue N).
     pub clue_notes: Vec<String>,
+    /// The notes before any clue ("No Video Clues Recorded.").
+    pub notes_default: String,
 }
 
 /// The computer's state while the probe is docked.
@@ -437,8 +440,8 @@ impl Game {
         }
         if let Some(function) = job.strip_suffix('!') {
             fx.extend(self.run_function(function));
-        } else if !self.defender.tasks.contains(&job) {
-            self.defender.tasks.push(job);
+        } else {
+            self.defender.queue_task(&job, self.elapsed);
         }
         fx
     }
@@ -448,9 +451,11 @@ impl Game {
         let arg = function.split_once("(\"").map(|(_, a)| a.trim_end_matches("\")").to_string()).unwrap_or_default();
         match function.split('(').next().unwrap_or("") {
             "DoorSensorsOff" => {
-                if self.defender.door_sensors {
-                    self.defender.door_sensors = false;
-                    self.defender.tasks.push("DoorSensors".into());
+                if self.defender.sensors == Sensors::Active {
+                    // Off for five minutes; the defender answers when they're back.
+                    self.defender.sensors = Sensors::Off;
+                    self.defender.queue_task("DoorSensors", self.elapsed);
+                    self.defender.down_for_a_while(self.elapsed);
                     Vec::new()
                 } else {
                     self.action("DoorSensorsBOL.Cmp", Task::None)
@@ -471,7 +476,7 @@ impl Game {
     }
 
     fn defender_node(&self) -> String {
-        self.nav.graph().at_line(self.defender.line).map(|n| n.id.clone()).unwrap_or_default()
+        self.defender.id().to_string()
     }
 
     /// Lingo's DefShutDown: trap it behind the bulkheads (only in the
@@ -483,6 +488,7 @@ impl Game {
         let node = self.defender_node();
         if how == "BulkHeads" && ["2.05", "2.06", "2.07"].contains(&node.as_str()) {
             self.defender.trapped = true;
+            self.defender.jammed = false;
             self.off_line(how)
         } else if how == "TurnDefOff" {
             self.defender.off = true;
@@ -516,9 +522,7 @@ impl Game {
 
     /// Lingo's DefOffLine: the segue, then phase 4.
     fn off_line(&mut self, how: &str) -> Vec<Effect> {
-        if !self.defender.tasks.iter().any(|t| t == how) {
-            self.defender.tasks.push(how.to_string());
-        }
+        self.defender.off_line(how, self.elapsed);
         let segue = if how == "Incin" { ("Misc Files", how) } else { ("Segues", how) };
         let mut fx = vec![Effect::Segue { folder: segue.0.into(), name: segue.1.into() }];
         match self.phase() {
@@ -526,7 +530,7 @@ impl Game {
             2 | 4 => {
                 self.nav.set_phase(4);
                 self.computer = None;
-                fx.push(self.nav.info_clip());
+                fx.extend([Effect::ErasePanel, self.nav.info_clip()]);
             }
             _ => {}
         }
@@ -537,9 +541,14 @@ impl Game {
     fn win(&mut self) -> Vec<Effect> {
         self.won = true;
         let video = format!("Win {}", self.rng.random(2));
+        // The end of the ship, then the win video on the WinFrame (no map,
+        // buttons or indicators), then back to the start.
         vec![
             Effect::Segue { folder: "Misc Files".into(), name: "EndofShip".into() },
+            Effect::ErasePanel,
+            Effect::Entering(true),
             Effect::Panel { folder: "Video".into(), name: video, keep: true },
+            Effect::GameOver,
         ]
     }
 
@@ -648,7 +657,7 @@ TravMenu,Mission,Return,
         assert_eq!(g.computer_button_at(420, 115), Some(ComputerButton::Cancel));
         let fx = enter(&mut g, "5678");
         assert_eq!(fx[0], panel("DoorSensors"));
-        assert!(!g.defender.door_sensors);
+        assert_eq!(g.defender.sensors, Sensors::Off);
         assert_eq!(g.defender_tasks(), ["DoorSensors"]);
         assert_eq!(g.computer_view().unwrap().digits, None, "back to the menu");
 

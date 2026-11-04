@@ -32,9 +32,13 @@ DNA kit and probe controls, door clearance, the energy bar and the phase changes
 play on the bridge screen. The probe arm docks at computer ports, and the computers run from the
 game's own table: menus, the keypad with this game's generated codes, the Mission and Crew
 screens, video messages (clues), and the actions, including the ones aimed at the defender
-(bulkheads, turning it off, incinerating or ejecting it), with their segues. The defender itself
-comes next; until then it stays at its start, so the location-based actions report the wrong
-location (see [docs/design.md](docs/design.md)).
+(bulkheads, turning it off, incinerating or ejecting it), with their segues. The defender roams
+the ship by its own map, comes for the probe when a door opens with the sensors on, warns with
+the lamp and its sounds as it nears, can be jammed, trapped, turned off or thrown out, comes back
+five minutes later, and catches the probe with the original's death scenes; after three probes
+the game is over (a new game starts, until there's a title screen). The Notes button (or N)
+shows the codes the video messages have given, over the view. See
+[docs/design.md](docs/design.md).
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
@@ -58,7 +62,9 @@ panels and the map mode switch; with the scanner on, click (auto scan) or drag (
 the view; with the arm out, press and drag in the view to move it onto a port. Keys: arrows move
 and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor (facing
 the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not in the original,
-S scan, X arm, C probe controls, M map mode, Enter on the keypad. F pixel-perfect scaling, H
+S scan, X arm, C probe controls, M map mode, Enter on the keypad. Space or the Jam button jams
+the defender; N shows the notes. The notes use the default font here; the original draws them in
+9-point Geneva. F pixel-perfect scaling, H
 debug overlay, Esc quit. The skill level (default 1) picks the scan table and video clues until
 the title screen exists. Computer codes show in a small built-in font; the original draws them
 with Mac text.
@@ -66,11 +72,12 @@ with Mac text.
 Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay "SK(400,60)A"` plays a
 sequence of steps (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
 P phase, S scan, X arm, C controls, K click the scan point (or, with the arm out, the port), A
-acquire, G grant DNA 01/02/10 and skip to phase 2 like the original's debug keys, digits on the
-keypad, `(x,y)` a click at stage coordinates);
+acquire, G grant DNA 01/02/10 and skip to phase 2 like the original's debug keys, Y be caught by
+the defender, J jam, N notes, digits on the keypad, `(x,y)` a click at stage coordinates);
 `--screenshot <png>` saves the screen (after the autoplay, or after a few seconds; or at
 `--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--debug` starts with the
-overlay on (skill, energy, DNA kit, phase, this game's codes and video clues, defender tasks).
+overlay on (skill, energy, DNA kit, phase, probe, the defender's node, warning level and plan,
+this game's codes and video clues, defender tasks).
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
 screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain
@@ -157,7 +164,11 @@ behind, `.U`/`.D` for ladders) are exactly the 375 on the Mac CD. `helixdb walk 
 nodes, 1,276 movies, none missing. With `--pc <HELIX>` it adds the PC's hidden rooms and looks
 up movies on both CDs: all 114 nodes, 1,329 movies, none missing. It also checks the movies
 behind every scan point (122) and everything the computers can play: menu clips, keypad
-actions, fixed messages, video clues and segues (87), none missing.
+actions, fixed messages, video clues and segues (87), none missing, and the death videos the
+DeathDB can pick (205; 3 are missing on the CD too, slips in the original's table). `helixdb defender <app>
+[--steps N] [--seed N]` lets the defender roam with the probe idle at the start and checks every
+step lands on a Def row: over three seeds of 3,000 steps, none off the table, all six decks
+visited, the longest plan 29 steps, a step every ~7.6 s at skill 1.
 
 The **score** (`VWSC`) gives the screen layout: a u32 size, then frames of (u8 length, u8
 offset) word patches to a 512-byte buffer that carries over between frames: 32 bytes of main

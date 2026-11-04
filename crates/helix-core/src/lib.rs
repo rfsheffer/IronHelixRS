@@ -5,12 +5,13 @@
 //! to perform in order. Everything follows `docs/design.md`.
 //!
 //! So far: navigation (§4 of the design doc), clearance (§5), scanning
-//! (§6), the probe arm (§7), computers (§8), energy (§10.1), the probe
-//! controls and the phase changes.
+//! (§6), the probe arm (§7), computers (§8), the defender (§9), energy
+//! (§10.1), losing probes (§10.3), the probe controls and the phase changes.
 
 pub mod access;
 pub mod arm;
 pub mod computer;
+pub mod defender;
 pub mod game;
 pub mod nav;
 pub mod rng;
@@ -18,6 +19,7 @@ pub mod scan;
 
 pub use access::Access;
 pub use computer::{ComputerButton, ComputerData, ComputerView};
+pub use defender::{DefenderData, Lamp};
 pub use game::{Action, Button, ControlsPage, Function, Game, Interface};
 pub use nav::{NavAction, NavButtons, Navigator, Panel};
 pub use scan::{BoxLook, ScanText, ScanView};
@@ -52,8 +54,18 @@ pub enum Effect {
     /// Clear a kept panel movie.
     ErasePanel,
     /// Play a 320x240 segue over the interface (disabling the defender, the
-    /// end of the ship).
+    /// end of the ship, losing a probe).
     Segue { folder: String, name: String },
+    /// Show the minutes left on the segue screen (after losing a probe).
+    Minutes(u32),
+    /// Switch the map mode (2 = the defender's deck, when it comes back).
+    MapMode(u8),
+    /// Show (true) or leave the score's Entering frame: the interface with
+    /// an empty control screen and no map, buttons or indicators, where a
+    /// new probe enters and the game-over speech plays.
+    Entering(bool),
+    /// All probes lost (or the game won): back to the title.
+    GameOver,
 }
 
 impl Effect {

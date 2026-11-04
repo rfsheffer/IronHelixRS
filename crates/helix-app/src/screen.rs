@@ -12,8 +12,8 @@ use director::score::Frame;
 use helix_core::game::ENERGY_FULL;
 use helix_core::scan::TICK;
 use helix_core::{
-    Access, Action, BoxLook, Button, ComputerButton, ComputerData, ControlsPage, Effect, Function, Game, Interface, NavAction,
-    Navigator, Panel, ScanText,
+    Access, Action, BoxLook, Button, ComputerButton, ComputerData, ControlsPage, DefenderData, Effect, Function, Game,
+    Interface, Lamp, NavAction, Navigator, Panel, ScanText,
 };
 use helixdb::Direction;
 
@@ -25,6 +25,7 @@ use crate::video::{Clip, Player};
 // Sprite channels.
 const CH_VIEW: usize = 1;
 const CH_ARM: usize = 2;
+const CH_LAMP: usize = 4;
 const CH_MAP: usize = 6;
 const CH_PROBE_ICON: usize = 7;
 const CH_DEFENDER_ICON: usize = 8;
@@ -34,10 +35,12 @@ const CH_SCAN_INDICATORS: std::ops::RangeInclusive<usize> = 11..=14;
 const CH_FUNCTION: usize = 15;
 const CH_MODE: usize = 16;
 const CH_NAV_FIRST: usize = 17; // up, down, forward, back, left, right
+const CH_GAME_CONTROLS: usize = 23;
 const CH_PANEL: usize = 24;
 
 // Cast members.
 const CAST_NAV_BUTTONS: u16 = 9; // 3 per button: single, double, pressed
+const CAST_LAMP: u16 = 30; // ambient blip; +1 warning one, +2 warning two
 const CAST_FUNCTION: u16 = 33; // none lit; +2 scan, +5 probe controls
 const CAST_MODE_BUTTON: u16 = 44; // + map mode
 const CAST_PROBE_ICON: u16 = 48; // + facing
@@ -64,10 +67,23 @@ const CAST_MESSAGE: u16 = 219;
 const CAST_SCAN_TEXT: u16 = 220; // active, contact, ready, seeking
 const CAST_SEGUE_SCREEN: u16 = 225;
 const CAST_KEYPAD: u16 = 233; // + key: 1-9, 10 = 0, 11 clear, 12 enter, 13 cancel
+const CAST_GAME_CONTROLS: u16 = 247; // the bar; +8 the Notes button lit
 
-/// Defender's start position (design doc §3.1); it stands still until the
-/// defender rules arrive.
-const DEFENDER_LINE: usize = 5;
+/// The ambient lamp blip moves in steps of this many pixels.
+const LAMP_STEP: i32 = 18;
+/// Minutes left, on the death screen: tens and ones digits (casts 289-298).
+const CAST_DIGITS: u16 = 289;
+const MINUTES_AT: [(i32, i32); 2] = [(124, 262), (132, 262)];
+/// The Notes button on the game controls bar.
+const NOTES_BUTTON: std::ops::Range<f32> = 225.0..271.0;
+/// Where the notes appear (over the view) and how wide they may run.
+pub const NOTES_AT: (f32, f32) = (28.0, 21.0);
+pub const NOTES_WIDTH: f32 = 227.0;
+pub const NOTES_BOTTOM: f32 = 140.0;
+/// The Jam function button's band.
+const FUNCTION_JAM: std::ops::Range<f32> = 47.0..62.0;
+/// The defender's marker slides this far per tick (Lingo's AnimateMap).
+const DEFENDER_SPEED: f32 = 7.0;
 
 /// Movies are 240x128; their inner 233x123 fills the view window.
 const VIEW_INNER: (usize, usize, usize, usize) = (4, 3, 233, 123);
@@ -136,6 +152,17 @@ pub struct GameScreen {
     /// Where the probe's marker is drawn: its deck and position, which
     /// slides toward the probe's node after each move.
     marker: Option<(u8, (f32, f32))>,
+    /// The same for the defender's marker.
+    defender_marker: Option<(u8, (f32, f32))>,
+    /// The segue's last frame stays up through the minutes-left pause.
+    segue_still: Option<(Vec<u8>, usize)>,
+    minutes: Option<u32>,
+    /// All probes lost: the game is over.
+    game_over: bool,
+    /// Showing the score's Entering frame (see `Effect::Entering`).
+    entering: bool,
+    /// The notes are up over the view (until the next action).
+    notes_up: bool,
     wait: f32,
     tick_time: f32,
     map_mode: u8,
@@ -175,8 +202,11 @@ impl GameScreen {
             no_arm: assets.data.no_arm.clone(),
             clue_lists: assets.data.video_clue_lists.clone(),
             clue_notes: assets.data.clue_notes.clone(),
+            notes_default: assets.data.notes_default.clone(),
         };
-        let game = Game::new(nav, assets.skill, assets.seed).with_computers(data);
+        let game = Game::new(nav, assets.skill, assets.seed)
+            .with_computers(data)
+            .with_defender(DefenderData::new(&assets.data.defender, &assets.data.deaths));
         let mut screens = HashMap::new();
         for (cast, name) in assets.movie.cast_names().map_err(|e| e.to_string())? {
             screens.entry(name).or_insert(cast);
@@ -199,6 +229,12 @@ impl GameScreen {
             screens,
             map_line: None,
             marker: None,
+            defender_marker: None,
+            segue_still: None,
+            minutes: None,
+            game_over: false,
+            entering: false,
+            notes_up: false,
             wait: 0.0,
             tick_time: 0.0,
             map_mode: 1,
@@ -215,6 +251,37 @@ impl GameScreen {
 
     pub fn busy(&self) -> bool {
         self.playing() || self.game.scan_busy()
+    }
+
+    /// All probes are lost and the game-over movies have played.
+    pub fn finished(&self) -> bool {
+        self.game_over && !self.playing()
+    }
+
+    /// The defender's deck and map point (6 = in a ladder).
+    fn defender_target(&self) -> Option<(u8, (i32, i32))> {
+        let d = self.game.defender();
+        let item = if d.in_ladder() { 6 } else { 2 };
+        Some((d.level(), self.map_point(d.line(), item)?))
+    }
+
+    /// Slide the defender's marker one step, or put it on a new deck.
+    fn step_defender_marker(&mut self) {
+        let Some((level, (tx, ty))) = self.defender_target() else { return };
+        let target = (tx as f32, ty as f32);
+        match &mut self.defender_marker {
+            Some((l, pos)) if *l == level => {
+                let (dx, dy) = (target.0 - pos.0, target.1 - pos.1);
+                let longest = dx.abs().max(dy.abs());
+                if longest <= DEFENDER_SPEED {
+                    *pos = target;
+                } else {
+                    pos.0 += dx / longest * DEFENDER_SPEED;
+                    pos.1 += dy / longest * DEFENDER_SPEED;
+                }
+            }
+            _ => self.defender_marker = Some((level, target)),
+        }
     }
 
     /// The probe's deck and map point (map item 2, or 6 in a ladder), on
@@ -279,6 +346,8 @@ impl GameScreen {
     }
 
     fn act(&mut self, action: Action, pressed: Option<usize>) {
+        // Anything else puts the notes away (a movie would draw over them).
+        self.notes_up = false;
         let fx = self.game.act(action);
         if !fx.is_empty() {
             self.pressed = pressed;
@@ -304,8 +373,36 @@ impl GameScreen {
         }
     }
 
+    /// The notes to show over the view, if they're up.
+    pub fn notes(&self) -> Option<Vec<String>> {
+        (self.notes_up && !self.playing()).then(|| self.game.notes_text())
+    }
+
+    /// The Notes button (Lingo's DisplayNotes): not while the scanner's
+    /// interface is up.
+    fn toggle_notes(&mut self) {
+        if self.game.interface() == Interface::Scan {
+            self.queue.push_back(Effect::Sound("SysBeeb".into()));
+            return;
+        }
+        self.notes_up = !self.notes_up;
+        if self.notes_up {
+            self.hilite = Some(((CAST_GAME_CONTROLS + 8, loc(&self.frame, CH_SCREEN)), HILITE_TIME));
+        }
+    }
+
     /// A press on the interface around the view; true if something took it.
     fn press_interface(&mut self, x: f32, y: f32) -> bool {
+        // The game controls bar: Notes (Quit, Save and Pause come with the
+        // game flow).
+        if let Some(img) = self.cast.get(CAST_GAME_CONTROLS)
+            && img.hit(loc(&self.frame, CH_GAME_CONTROLS), x, y)
+        {
+            if NOTES_BUTTON.contains(&x) {
+                self.toggle_notes();
+            }
+            return true;
+        }
         // Navigation buttons.
         let buttons = self.button_casts();
         for (i, cast) in buttons.iter().enumerate() {
@@ -323,6 +420,8 @@ impl GameScreen {
         {
             if FUNCTION_SCAN.contains(&y) {
                 self.act(Action::Scan, None);
+            } else if FUNCTION_JAM.contains(&y) {
+                self.act(Action::Jam, None);
             } else if FUNCTION_ARM.contains(&y) {
                 self.act(Action::Arm, None);
             } else if FUNCTION_CONTROLS.contains(&y) {
@@ -428,6 +527,8 @@ impl GameScreen {
             S if !self.busy() => self.act(Action::Scan, None),
             C if !self.busy() => self.act(Action::Controls, None),
             X if !self.busy() => self.act(Action::Arm, None),
+            Space if !self.busy() => self.act(Action::Jam, None),
+            N if !self.busy() => self.toggle_notes(),
             // The keypad (Backspace cancels, as in the original; Enter is ours).
             _ if self.game.computer_view().is_some_and(|v| v.digits.is_some()) => {
                 let button = match key {
@@ -467,6 +568,10 @@ impl GameScreen {
                 }
             }
             A if !self.busy() => self.act(Action::Press(Button::Acquire), None),
+            Y if !self.busy() => {
+                let fx = self.game.debug_caught();
+                self.queue.extend(fx);
+            }
             G if !self.busy() => {
                 let fx = self.game.debug_phase_two();
                 self.queue.extend(fx);
@@ -510,13 +615,34 @@ impl GameScreen {
         // The marker moves to a new deck at once and slides once a move's
         // movie is over.
         self.step_marker(false);
-        let movie_playing = self.view.is_some() || self.wait > 0.0 || !self.queue.is_empty();
-        if !movie_playing || self.game.scan_busy() || self.marker_moving() {
+        // The game (the defender, the scanner's animations) waits while any
+        // movie or clip plays, as the original's modal playback did; the
+        // map markers keep sliding over location strips and computer clips.
+        let modal = self.view.is_some()
+            || self.info.is_some()
+            || self.panel.is_some()
+            || self.segue.is_some()
+            || self.bridge_movie.is_some()
+            || self.wait > 0.0
+            || !self.queue.is_empty()
+            || self.entering;
+        let slide = self.view.is_none()
+            && self.segue.is_none()
+            && self.bridge_movie.is_none()
+            && self.wait <= 0.0
+            && self.queue.is_empty()
+            && !self.entering;
+        let ticking = !modal || self.game.scan_busy();
+        if ticking || slide {
             self.tick_time += dt;
             while self.tick_time >= TICK {
                 self.tick_time -= TICK;
-                if !movie_playing {
+                if slide {
                     self.step_marker(true);
+                    self.step_defender_marker();
+                }
+                if !ticking {
+                    continue;
                 }
                 for e in self.game.tick() {
                     match e {
@@ -544,6 +670,7 @@ impl GameScreen {
                 if !p.update(dt) {
                     return;
                 }
+                self.segue_still = p.current().map(|f| (f.to_vec(), p.clip.width));
                 self.segue = None;
                 continue;
             }
@@ -577,8 +704,15 @@ impl GameScreen {
             let Some(effect) = self.queue.pop_front() else {
                 self.pressed = None;
                 self.map_line = None;
+                self.segue_still = None;
+                self.minutes = None;
                 return;
             };
+            // A movie in the view ends the death screen's pause.
+            if matches!(effect, Effect::Video { .. }) {
+                self.segue_still = None;
+                self.minutes = None;
+            }
             match effect {
                 Effect::Video { folder, name, sound } => {
                     if let Some(s) = sound {
@@ -587,7 +721,8 @@ impl GameScreen {
                     match Clip::load(&assets.file(&folder, &name)) {
                         Ok(clip) => {
                             self.status = format!("{folder}/{name}");
-                            self.view_is_nav = folder.starts_with("Navigation");
+                            // The entering probe's view ends on the start, like a move.
+                            self.view_is_nav = folder.starts_with("Navigation") || folder == "Opening";
                             self.start_audio(&clip).await;
                             self.view = Some(Player::new(clip));
                         }
@@ -602,6 +737,17 @@ impl GameScreen {
                 }
                 Effect::Sound(s) => self.sounds.play(&s).await,
                 Effect::StopSound => self.sounds.stop(),
+                Effect::Minutes(m) => self.minutes = Some(m),
+                Effect::MapMode(m) => self.map_mode = m,
+                Effect::GameOver => self.game_over = true,
+                Effect::Entering(on) => {
+                    self.entering = on;
+                    self.segue_still = None;
+                    self.minutes = None;
+                    // A new probe: the markers start where things are now.
+                    self.marker = None;
+                    self.defender_marker = None;
+                }
                 Effect::MapLine(line) => {
                     self.map_line = Some(line);
                     self.step_marker(false);
@@ -619,7 +765,9 @@ impl GameScreen {
                 },
                 Effect::ErasePanel => self.panel_still = None,
                 Effect::Segue { folder, name } => match Clip::load(&assets.file(&folder, &name)) {
+                    // The next segue covers the minutes left.
                     Ok(clip) => {
+                        self.minutes = None;
                         self.status = format!("{folder}/{name}");
                         self.start_audio(&clip).await;
                         self.segue = Some(Player::new(clip));
@@ -683,7 +831,17 @@ impl GameScreen {
         let managed = |ch: usize| {
             matches!(
                 ch,
-                CH_VIEW | CH_ARM | CH_MAP | CH_PROBE_ICON | CH_DEFENDER_ICON | CH_SCREEN | CH_ENERGY | CH_FUNCTION | CH_MODE | CH_PANEL
+                CH_VIEW
+                    | CH_ARM
+                    | CH_LAMP
+                    | CH_MAP
+                    | CH_PROBE_ICON
+                    | CH_DEFENDER_ICON
+                    | CH_SCREEN
+                    | CH_ENERGY
+                    | CH_FUNCTION
+                    | CH_MODE
+                    | CH_PANEL
             ) || CH_SCAN_INDICATORS.contains(&ch)
                 || (CH_NAV_FIRST..CH_NAV_FIRST + 6).contains(&ch)
         };
@@ -734,6 +892,17 @@ impl GameScreen {
         // Control screen: node screen, door/elevator panel, scan interface
         // or probe controls.
         let screen_loc = loc(&self.frame, CH_SCREEN);
+        if self.entering {
+            // The Entering frame: an empty control screen (with the game-over
+            // speech over it), and none of the map, buttons or indicators.
+            self.draw_cast(canvas, CAST_EMPTY_SCREEN, screen_loc, false);
+            if let Some((pixels, width)) = self.panel_frame() {
+                let h = pixels.len() / 4 / width.max(1);
+                canvas.blit(pixels, width, (0, 0, width, h), PANEL_AT.0, PANEL_AT.1, false);
+            }
+            self.draw_segues(canvas);
+            return;
+        }
         let interface = self.game.interface();
         match interface {
             Interface::Nav(panel) => {
@@ -789,16 +958,6 @@ impl GameScreen {
             let h = pixels.len() / 4 / width.max(1);
             canvas.blit(pixels, width, (0, 0, width, h), INFO_STRIP.0, INFO_STRIP.1, false);
         }
-        // Computer clips over the control screen; the ETA ship sits on its clip.
-        if let Some((pixels, width)) = self.panel_frame() {
-            let h = pixels.len() / 4 / width.max(1);
-            canvas.blit(pixels, width, (0, 0, width, h), PANEL_AT.0, PANEL_AT.1, false);
-        }
-        if self.panel.is_none()
-            && let Some(at) = self.game.computer_view().and_then(|v| v.eta)
-        {
-            self.draw_cast(canvas, CAST_ETA_SHIP, at, true);
-        }
         if self.view.is_none()
             && self.info.is_none()
             && let Some(text) = self.game.scan_view().text
@@ -820,6 +979,17 @@ impl GameScreen {
         for (frame, x) in self.game.scan_bars().into_iter().flatten() {
             self.draw_cast(canvas, CAST_SCAN_BARS + frame as u16, (x, SCAN_BAR_V), true);
         }
+        // Computer clips cover the control screen, indicators and all; the
+        // ETA ship sits on its clip.
+        if let Some((pixels, width)) = self.panel_frame() {
+            let h = pixels.len() / 4 / width.max(1);
+            canvas.blit(pixels, width, (0, 0, width, h), PANEL_AT.0, PANEL_AT.1, false);
+        }
+        if self.panel.is_none()
+            && let Some(at) = self.game.computer_view().and_then(|v| v.eta)
+        {
+            self.draw_cast(canvas, CAST_ETA_SHIP, at, true);
+        }
         let function = match self.game.function() {
             None => CAST_FUNCTION,
             Some(Function::Scan) => CAST_FUNCTION + 2,
@@ -837,29 +1007,42 @@ impl GameScreen {
             .marker
             .filter(|(level, _)| *level == probe_level)
             .map(|(_, (x, y))| (x.round() as i32, y.round() as i32));
-        let defender_level = self.game.graph().at_line(DEFENDER_LINE).map_or(0, |n| n.level());
+        let d = self.game.defender();
+        let defender_level = d.level();
+        let defender_marker = self
+            .defender_marker
+            .filter(|(level, _)| *level == defender_level)
+            .map(|(_, (x, y))| (x.round() as i32, y.round() as i32))
+            .or_else(|| self.defender_target().map(|(_, p)| p))
+            .filter(|_| d.visible());
         let probe_item = if nav.in_ladder() { 6 } else { 2 };
         let (map_cast, probe, defender) = match self.map_mode {
             1 => (
                 CAST_LEVEL_MAPS + probe_level as u16 - 1,
                 marker.or(self.map_point(probe_line, probe_item)).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)),
-                (defender_level == probe_level)
-                    .then(|| self.map_point(DEFENDER_LINE, 2).map(|p| (CAST_DEFENDER_ICON, p)))
-                    .flatten(),
+                (defender_level == probe_level).then(|| defender_marker.map(|p| (CAST_DEFENDER_ICON, p))).flatten(),
             ),
             2 => (
-                CAST_LEVEL_MAPS + defender_level as u16 - 1,
+                CAST_LEVEL_MAPS + defender_level.max(1) as u16 - 1,
                 (defender_level == probe_level)
                     .then(|| marker.or(self.map_point(probe_line, probe_item)).map(|p| (CAST_PROBE_ICON + nav.facing().index() as u16, p)))
                     .flatten(),
-                self.map_point(DEFENDER_LINE, 2).map(|p| (CAST_DEFENDER_ICON, p)),
+                defender_marker.map(|p| (CAST_DEFENDER_ICON, p)),
             ),
             _ => (
                 CAST_LEVEL_MAPS + 6,
                 self.map_point(probe_line, 4).map(|p| (CAST_PROBE_OVERVIEW, p)),
-                self.map_point(DEFENDER_LINE, 4).map(|p| (CAST_DEFENDER_OVERVIEW, p)),
+                self.map_point(d.line(), 4).filter(|_| d.visible()).map(|p| (CAST_DEFENDER_OVERVIEW, p)),
             ),
         };
+        // The warning lamp under the view.
+        let lamp_at = loc(&self.frame, CH_LAMP);
+        match d.lamp() {
+            Lamp::Off => {}
+            Lamp::Ambient(n) => self.draw_cast(canvas, CAST_LAMP, (lamp_at.0 + n as i32 * LAMP_STEP, lamp_at.1), true),
+            Lamp::One => self.draw_cast(canvas, CAST_LAMP + 1, lamp_at, true),
+            Lamp::Two => self.draw_cast(canvas, CAST_LAMP + 2, lamp_at, true),
+        }
         self.draw_cast(canvas, map_cast, loc(&self.frame, CH_MAP), false);
         for (cast, point) in [probe, defender].into_iter().flatten() {
             self.draw_cast(canvas, cast, point, true);
@@ -872,16 +1055,26 @@ impl GameScreen {
                 self.draw_cast(canvas, *c, loc(&self.frame, CH_NAV_FIRST + i), true);
             }
         }
+        self.draw_segues(canvas);
+    }
+
+    /// A segue (playing, or its last frame) and the minutes left over it.
+    fn draw_segues(&self, canvas: &mut Canvas) {
         if let Some(movie) = &self.segue {
-            self.draw_segue(canvas, movie);
+            self.draw_segue(canvas, movie.current(), movie.clip.width);
+        } else if let Some((frame, width)) = &self.segue_still {
+            self.draw_segue(canvas, Some(frame), *width);
+        }
+        if let Some(m) = self.minutes.filter(|_| self.segue_still.is_some() || self.segue.is_some()) {
+            self.draw_cast(canvas, CAST_DIGITS + (m / 10 % 10) as u16, MINUTES_AT[0], false);
+            self.draw_cast(canvas, CAST_DIGITS + (m % 10) as u16, MINUTES_AT[1], false);
         }
     }
 
-    /// A segue playing over the whole interface.
-    fn draw_segue(&self, canvas: &mut Canvas, movie: &Player) {
-        self.draw_cast(canvas, CAST_SEGUE_SCREEN, loc(&self.frame, CH_SCREEN), false);
-        if let Some(frame) = movie.current() {
-            let w = movie.clip.width;
+    /// A segue over the whole interface (the score's Segue frame).
+    fn draw_segue(&self, canvas: &mut Canvas, frame: Option<&[u8]>, w: usize) {
+        self.draw_cast(canvas, CAST_SEGUE_SCREEN, loc(&self.frame, CH_SCREEN), true);
+        if let Some(frame) = frame {
             let h = frame.len() / 4 / w.max(1);
             canvas.blit(frame, w, (0, 0, w, h), SEGUE_AT.0, SEGUE_AT.1, false);
         }

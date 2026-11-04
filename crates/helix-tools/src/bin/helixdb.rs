@@ -41,6 +41,16 @@ enum Command {
         #[arg(long)]
         nav: PathBuf,
     },
+    /// Let the defender roam on its own (the probe idle at the start) and
+    /// check every step lands on a Def row, reporting where it went.
+    Defender {
+        app: PathBuf,
+        /// Steps to simulate.
+        #[arg(long, default_value_t = 2000)]
+        steps: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
     /// Explore every navigation state reachable from the start through the
     /// game rules (helix-core) and check every movie and clip they ask for.
     Walk {
@@ -65,6 +75,7 @@ fn main() -> Result<()> {
         Command::Summary { app } => summary(&load(&app)?),
         Command::Nodes { app, level } => nodes(&load(&app)?, level),
         Command::Videos { app, nav } => videos(&load(&app)?, &nav),
+        Command::Defender { app, steps, seed } => defender(load(&app)?, steps, seed),
         Command::Walk { app, files, pc } => {
             let mut g = load(&app)?;
             if let Some(pc) = &pc {
@@ -77,6 +88,43 @@ fn main() -> Result<()> {
             walk(g, &helixdb::GameFiles::new(files, pc.as_deref()).with_installed(installed))
         }
     }
+}
+
+fn defender(g: GameData, steps: usize, seed: u64) -> Result<()> {
+    use helix_core::{Access, DefenderData, Effect, Game, Navigator};
+    use std::collections::BTreeMap;
+
+    let mut nav = Navigator::new(g.nav.clone());
+    *nav.access_mut() = Access::new(g.clearance.clone());
+    let mut game = Game::new(nav, 1, seed).with_defender(DefenderData::new(&g.defender, &g.deaths));
+    let (mut taken, mut caught, mut bad, mut longest) = (0, 0, 0, 0);
+    let mut decks: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut last = game.defender().id().to_string();
+    let mut ticks = 0u64;
+    while taken < steps && ticks < 50_000_000 {
+        ticks += 1;
+        let fx = game.tick();
+        if fx.iter().any(|e| matches!(e, Effect::Segue { name, .. } if name.starts_with("DefDeath"))) {
+            caught += 1;
+        }
+        if fx.iter().any(|e| matches!(e, Effect::GameOver)) {
+            game = Game::new(Navigator::new(g.nav.clone()), 1, seed + ticks).with_defender(DefenderData::new(&g.defender, &g.deaths));
+        }
+        let id = game.defender().id().to_string();
+        if id != last {
+            taken += 1;
+            if id.is_empty() {
+                bad += 1;
+            }
+            *decks.entry(game.defender().level()).or_default() += 1;
+            longest = longest.max(game.defender().plan().len());
+            last = id;
+        }
+    }
+    println!("{taken} steps in {:.0} minutes of play, {bad} off the Def table, longest plan {longest}", ticks as f64 / 30.0 / 60.0);
+    println!("steps by deck: {decks:?}");
+    println!("caught the idle probe {caught} times");
+    Ok(())
 }
 
 fn walk(g: GameData, files: &helixdb::GameFiles) -> Result<()> {
@@ -207,6 +255,23 @@ fn walk(g: GameData, files: &helixdb::GameFiles) -> Result<()> {
     computer.extend(["Incin", "EndofShip", "UnableDeploy"].map(|n| ("Misc Files", n.to_string())));
     let missing: Vec<_> = computer.iter().filter(|(f, n)| !exists(f, n)).collect();
     println!("{} computer clips, video messages and segues, {} missing", computer.len(), missing.len());
+    for (f, n) in missing.iter().take(30) {
+        println!("  missing {f}/{n}");
+    }
+
+    // Every death video the DeathDB can pick: row 4 * (node line - 1) +
+    // facing + 1, group n -> <node>.<facing letter>.<n>.
+    let mut deaths = BTreeSet::new();
+    for row in &g.deaths {
+        let facing = (row.line - 1) % 4;
+        let letter = ['N', 'E', 'S', 'W'][facing];
+        let level = row.node.chars().next().unwrap_or('0');
+        for n in 1..=row.groups.len() {
+            deaths.insert((format!("Navigation/L{level}"), format!("{}.{letter}.{n}", row.node)));
+        }
+    }
+    let missing: Vec<_> = deaths.iter().filter(|(f, n)| !exists(f, n)).collect();
+    println!("{} death videos, {} missing", deaths.len(), missing.len());
     for (f, n) in missing.iter().take(30) {
         println!("  missing {f}/{n}");
     }

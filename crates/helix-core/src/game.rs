@@ -10,6 +10,7 @@ use helixdb::nav::ScanPoint;
 use crate::access::KIT_SIZE;
 use crate::arm::{Arm, ArmEvent};
 use crate::computer::{Computer, ComputerButton, ComputerData};
+use crate::defender::{Defender, DefenderData, DefenderEvent, Probe};
 use crate::nav::{NavAction, Navigator, Panel};
 use crate::rng::Rng;
 use crate::scan::{Scan, ScanEvent, ScanView};
@@ -26,8 +27,10 @@ const BAR_FRAMES: u8 = 5;
 const BAR_X: [i32; 4] = [399, 418, 436, 455];
 /// Game length in minutes (§12.3).
 pub const GAME_MINUTES: f32 = 90.0;
-/// The defender's start (line 5); it stays there until its rules arrive.
-const DEFENDER_START: usize = 5;
+/// Probes per game (§10.3).
+pub const PROBES: u8 = 3;
+/// Jamming needs more energy than this and costs it (§9.5).
+const JAM_COST: i32 = 10;
 
 /// What the control screen shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +83,8 @@ pub enum Action {
     Controls,
     /// The Arm function button.
     Arm,
+    /// The Jam function button (or Space).
+    Jam,
     /// A button on the computer screen.
     Computer(ComputerButton),
     /// Mouse down, drag and up in the view window.
@@ -87,17 +92,6 @@ pub enum Action {
     ViewDrag(i32, i32),
     ViewRelease,
     Press(Button),
-}
-
-/// What the computers know of the defender, until its own rules arrive.
-#[derive(Debug, Clone)]
-pub(crate) struct Defender {
-    pub(crate) line: usize,
-    pub(crate) off: bool,
-    pub(crate) trapped: bool,
-    pub(crate) door_sensors: bool,
-    /// Tasks queued for it by computer actions (section 8.5).
-    pub(crate) tasks: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -125,6 +119,8 @@ pub struct Game {
     /// Seconds played.
     pub(crate) elapsed: f32,
     pub(crate) won: bool,
+    /// The probe in play (1-3).
+    probe_number: u8,
 }
 
 impl Game {
@@ -148,12 +144,36 @@ impl Game {
             notes: Vec::new(),
             auth_code: String::new(),
             mission_codes: Vec::new(),
-            defender: Defender { line: DEFENDER_START, off: false, trapped: false, door_sensors: true, tasks: Vec::new() },
+            defender: Defender::new(Arc::default()),
             elapsed: 0.0,
             won: false,
+            probe_number: 1,
         };
         game.show_bars();
         game
+    }
+
+    /// Add the defender, from the Def and DeathDB tables; it picks its first
+    /// target.
+    pub fn with_defender(mut self, data: DefenderData) -> Self {
+        self.defender = Defender::new(Arc::new(data));
+        let probe = self.probe();
+        self.defender.start(&mut self.rng, self.skill, &probe);
+        self
+    }
+
+    pub fn defender(&self) -> &Defender {
+        &self.defender
+    }
+
+    pub fn probe_number(&self) -> u8 {
+        self.probe_number
+    }
+
+    /// Where the probe is, for the defender.
+    fn probe(&self) -> Probe {
+        let n = self.nav.node();
+        Probe { line: n.line, id: n.id.clone(), level: n.level(), facing: self.nav.facing().index(), door_open: self.nav.door_open() }
     }
 
     /// Add the computers: picks this game's video clues and codes.
@@ -171,6 +191,16 @@ impl Game {
     /// The player's notes, newest first (video clue notes).
     pub fn notes(&self) -> &[String] {
         &self.notes
+    }
+
+    /// The notes as the Notes button shows them: the clue notes, newest
+    /// first, or the default text before any (Lingo's NotesCast).
+    pub fn notes_text(&self) -> Vec<String> {
+        if self.notes.is_empty() {
+            self.data.notes_default.lines().map(str::to_string).collect()
+        } else {
+            self.notes.clone()
+        }
     }
 
     /// This game's video clues and those seen.
@@ -276,6 +306,11 @@ impl Game {
         self.advance_phase(2)
     }
 
+    /// Testing aid: the defender catches the probe now (static death).
+    pub fn debug_caught(&mut self) -> Vec<Effect> {
+        self.caught(None)
+    }
+
     /// The scan point when facing `d` here, from this skill's table.
     fn scan_point(&self, d: helixdb::Direction) -> Option<ScanPoint> {
         if self.nav.in_ladder() {
@@ -298,7 +333,10 @@ impl Game {
     }
 
     pub fn act(&mut self, action: Action) -> Vec<Effect> {
+        // Any input holds the defender back (Director's timeout).
+        self.defender.input();
         match action {
+            Action::Jam => self.jam(),
             Action::Nav(a) => self.navigate(a),
             Action::Scan if self.scan.is_some() => self.close_scan(),
             Action::Scan => self.open_scan(),
@@ -347,11 +385,15 @@ impl Game {
             *bar = (*bar as i32 + drift).clamp(0, BAR_FRAMES as i32 - 1) as u8;
         }
         self.elapsed += crate::scan::TICK;
+        let probe = self.probe();
+        let events = self.defender.tick(crate::scan::TICK, self.elapsed, &mut self.rng, self.skill, &probe);
+        let defender_fx = self.defender_events(events);
         let events = match &mut self.scan {
             Some(s) => s.tick(&mut self.rng),
             None => Vec::new(),
         };
-        let mut fx = self.scan_events(events);
+        let mut fx = defender_fx;
+        fx.extend(self.scan_events(events));
         let arm_events = self.arm.as_mut().map(Arm::tick).unwrap_or_default();
         for e in arm_events {
             match e {
@@ -402,7 +444,8 @@ impl Game {
     }
 
     fn navigate(&mut self, action: NavAction) -> Vec<Effect> {
-        let fx = self.nav.act(action);
+        let (line, door) = (self.nav.line(), self.nav.door_open());
+        let mut fx = self.nav.act(action);
         // Any movement movie closes the scanner, probe controls, arm and computer.
         if fx.iter().any(|e| matches!(e, Effect::Video { .. })) {
             self.scan = None;
@@ -410,6 +453,96 @@ impl Game {
             self.arm = None;
             self.computer = None;
             self.show_bars();
+        }
+        let probe = self.probe();
+        let moved = self.nav.line() != line && !matches!(action, NavAction::Elevator(_));
+        let events = if self.nav.door_open() != door {
+            // The node beyond the door, for the sensors.
+            let n = self.nav.node();
+            let beyond = n.exit(self.nav.facing()).and_then(|e| self.nav.graph().step(n, e.offset)).map(|b| b.id.clone());
+            self.defender.after_door(&mut self.rng, &probe, beyond.as_deref())
+        } else if moved {
+            self.defender.after_move(&mut self.rng, self.skill, &probe)
+        } else {
+            Vec::new()
+        };
+        fx.extend(self.defender_events(events));
+        fx
+    }
+
+    /// Lingo's JamDefender.
+    fn jam(&mut self) -> Vec<Effect> {
+        if self.energy <= JAM_COST {
+            return vec![Effect::Sound("SysBeeb".into())];
+        }
+        self.defender.jam(self.skill);
+        self.energy -= JAM_COST;
+        vec![Effect::Sound("Jamming".into())]
+    }
+
+    /// Act on what the defender did.
+    fn defender_events(&mut self, events: Vec<DefenderEvent>) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        for e in events {
+            match e {
+                DefenderEvent::Sound(s) => fx.push(Effect::Sound(s.into())),
+                DefenderEvent::Responds(task) => {
+                    if self.computer.is_some() {
+                        fx.push(Effect::Panel { folder: "Computer".into(), name: format!("{task}BOL.Cmp"), keep: false });
+                    } else {
+                        fx.push(Effect::InfoClip { folder: "Messages".into(), name: format!("{task}BOL.Mssg") });
+                    }
+                }
+                DefenderEvent::Back => fx.push(Effect::MapMode(2)),
+                DefenderEvent::Caught(video) => {
+                    fx.extend(self.caught(video));
+                    break;
+                }
+            }
+        }
+        fx
+    }
+
+    /// Lingo's KillUser and NewProbe: the death, then the next probe or the
+    /// end (§9.6, §10.3).
+    fn caught(&mut self, video: Option<(String, String)>) -> Vec<Effect> {
+        let mut fx = match video {
+            Some((folder, name)) => vec![Effect::video(folder, name, None)],
+            None => vec![Effect::Sound("Static".into()), Effect::video("Misc Files", "DeathStatic.Paco", None)],
+        };
+        fx.push(Effect::video("Misc Files", "FadeToGreen.Paco", None));
+        self.scan = None;
+        self.controls = None;
+        self.arm = None;
+        self.computer = None;
+        // The death screen (the score's Segue frame) has no map, buttons or
+        // indicators, like the Entering frame.
+        fx.extend([Effect::ErasePanel, Effect::Entering(true)]);
+        fx.push(Effect::Segue { folder: "Segues".into(), name: format!("DefDeath{}", self.probe_number) });
+        if self.probe_number < PROBES {
+            let left = (GAME_MINUTES - self.elapsed / 60.0).max(0.0) as u32;
+            fx.extend([Effect::Minutes(left), Effect::Wait(2.0), Effect::Sound("Entering".into())]);
+            fx.push(Effect::Segue { folder: "Opening".into(), name: "Entering Ship".into() });
+            fx.push(Effect::Entering(true));
+            // The probe's own view as it enters, ending on the start; play goes
+            // on from there (Lingo's InitGame plays no turn).
+            fx.push(Effect::video("Opening", "Entering Ship PPV", None));
+            fx.push(Effect::Entering(false));
+            self.probe_number += 1;
+            self.nav.restart();
+            self.energy = ENERGY_FULL;
+            self.defender.restart();
+            let probe = self.probe();
+            self.defender.start(&mut self.rng, self.skill, &probe);
+            self.show_bars();
+            fx.push(Effect::MapMode(1));
+            fx.push(self.nav.info_clip());
+        } else {
+            let lose = format!("Lose {}", self.rng.random(3));
+            fx.push(Effect::Segue { folder: "Misc Files".into(), name: "GameOver".into() });
+            fx.push(Effect::Entering(true));
+            fx.push(Effect::Panel { folder: "Video".into(), name: lose, keep: true });
+            fx.push(Effect::GameOver);
         }
         fx
     }
@@ -589,13 +722,18 @@ impl Game {
         self.scan = None;
         self.controls = None;
         self.arm = None;
-        self.computer = None;
+        let had_computer = self.computer.take().is_some();
         self.show_bars();
-        vec![
+        let mut fx = Vec::new();
+        if had_computer {
+            fx.push(Effect::ErasePanel);
+        }
+        fx.extend([
             Effect::Bridge { folder: "Opening".into(), name: format!("Phase{}", phase - 1) },
             Effect::RestoreView,
             self.nav.info_clip(),
-        ]
+        ]);
+        fx
     }
 }
 

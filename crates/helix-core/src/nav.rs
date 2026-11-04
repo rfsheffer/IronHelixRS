@@ -115,6 +115,20 @@ impl Navigator {
         self.facing
     }
 
+    pub fn door_open(&self) -> bool {
+        self.door_open
+    }
+
+    /// A new probe enters: back at the start, facing North.
+    pub fn restart(&mut self) {
+        self.line = START_LINE;
+        self.facing = Direction::North;
+        self.in_ladder = false;
+        self.door_open = false;
+        self.repeat = false;
+        self.chute_open = false;
+    }
+
     pub fn in_ladder(&self) -> bool {
         self.in_ladder
     }
