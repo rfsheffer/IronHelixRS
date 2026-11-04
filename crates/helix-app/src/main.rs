@@ -33,7 +33,8 @@ use screen::{GameScreen, Start};
 use sprites::Canvas;
 use title::{Choice, TitleScreen};
 
-const PANEL_COLOR: Color = Color::new(0.10, 0.10, 0.11, 1.0);
+/// Beside (or above and below) the stage when there is no side art.
+const PANEL_COLOR: Color = BLACK;
 
 /// Keys passed on to the game screen.
 const GAME_KEYS: [KeyCode; 31] = [

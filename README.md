@@ -23,6 +23,41 @@ crates/helix-app     the game itself (`ironhelix`), built on macroquad for deskt
 out/                 generated output (gitignored)
 ```
 
+## What you need
+
+The game runs on files from your own copies of the original releases. Only the **Mac release** is
+required; the PC and Sega CD releases each add something if you have them. The paths below are
+where the game looks by default (relative to this folder); each can be changed on the command
+line.
+
+| Release | Files you start with | What the game reads | Without it |
+|---|---|---|---|
+| **Mac** (required) | `../Reference/Game/Mac/Iron-Helix_Mac_EN.sit`, a StuffIt archive holding the CD image `Iron Helix™ CD.img` | From the CD: the `Iron Helix™ Files` folder (movies), at `out/mac/files/Iron Helix™ Files` (`--mac-files`). From `Iron Helix™ Installer` on the CD: the game program's resource fork `Iron Helix™.rsrc` (its scripts, tables, artwork and sounds), at `out/mac/app/Iron Helix™/Iron Helix™.rsrc` (`--mac-app`), with the installed `Iron Helix Sounds` and `Misc Files` folders beside it | The game won't start |
+| **PC** (optional) | The `HELIX` folder from the PC CD, copied as is to `../Reference/Game/Windows/HELIX` | `HELIX.EXE` (the hidden rooms' node data) and the movies in `NAV`, `SEGUES` and so on (`--pc-files`) | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09) |
+| **Sega CD** (optional) | The disc image `../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue` with its `.img` | The theme from the image's audio track 2, straight from the `.cue`/`.img` (`--sega-cue`); the extended ending `SEGUES/ENDING.SEG` from the files extracted to `out/sega/files` (`--sega-files`) | The Mac's tune on the title screen; no extended ending after a skill-5 win |
+
+Setting up, in order (the Sega step is only for the extended ending; the theme needs no setup):
+
+```
+cargo build --release
+
+# Mac: recover the disc image's resource fork (which Windows drops), open the image, extract
+# the CD, then unpack the installed game from its installer
+target/release/macx sit-extract ../Reference/Game/Mac/Iron-Helix_Mac_EN.sit -o out/mac --rsrc-only
+target/release/macx ndif "../Reference/Game/Mac/Iron Helix™ CD.img" --rsrc "out/mac/Iron Helix™ CD.img.rsrc" -o out/mac/helix.hfs
+target/release/macx hfs-extract out/mac/helix.hfs -o out/mac/files
+target/release/macx sit-extract "out/mac/files/Iron Helix™ Installer" -o out/mac/app
+
+# Sega CD (optional): extract the disc's files
+target/release/isox extract "../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).img" -o out/sega/files
+
+# Play
+cargo run --release -p helix-app
+```
+
+The PC folder needs no extracting. Everything extracted stays in `out/`, which is never
+committed. The sections further down explain each tool.
+
 ## Running the game: `ironhelix`
 
 The whole game plays: the opening, the title screen (skill 1-5, begin, load, replay the intro,
@@ -50,7 +85,7 @@ cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-file
     [--skill 1-5] [--seed N] [--skip-title]
 ```
 
-Defaults are the `out/mac/...` folders the extraction steps below create (sounds come from the
+Defaults are the paths in [What you need](#what-you-need) (sounds come from the
 `Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`).
 
 With the PC CD's `HELIX` folder (`--pc-files`, default `../Reference/Game/Windows/HELIX` when it
@@ -98,8 +133,8 @@ left, a failed probe, phase, probe, the defender's node, warning level and plan,
 codes and video clues, defender tasks).
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
-screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain
-dark color if it's missing):
+screens the space on each side is filled with artwork from **`assets/side_panel.png`** (plain
+black if it's missing):
 
 - The texture is drawn at the full screen height, **anchored to its right edge** (the edge that
   touches the stage) and cropped on the left when the space is narrower than the art. It is never
@@ -108,7 +143,7 @@ dark color if it's missing):
 - Each side is 1/6 of the screen width on 16:9 and up to ~0.44 × the screen height on 20:9
   phones, so art about **0.45 × its height wide** (e.g. 500×1080) covers common phones. Put the
   important detail near the right edge.
-- Screens taller than 4:3 get plain bars above and below for now.
+- Screens taller than 4:3 get plain black bars above and below for now.
 
 ## The `paco` tool
 
