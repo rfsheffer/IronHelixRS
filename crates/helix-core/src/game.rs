@@ -29,6 +29,13 @@ const BAR_X: [i32; 4] = [399, 418, 436, 455];
 pub const GAME_MINUTES: f32 = 90.0;
 /// Probes per game (§10.3).
 pub const PROBES: u8 = 3;
+/// A move into a failure spot breaks the probe 1 time in this many (§10.2),
+/// and always when energy is this low.
+const FAILURE_CHANCE: u32 = 50;
+const LOW_ENERGY: i32 = 5;
+/// The first time warning comes with this many minutes left (Lingo's
+/// PercInMiss: game length - 30).
+const FIRST_WARNING: f32 = 60.0;
 /// Jamming needs more energy than this and costs it (§9.5).
 const JAM_COST: i32 = 10;
 
@@ -121,6 +128,14 @@ pub struct Game {
     pub(crate) won: bool,
     /// The probe in play (1-3).
     probe_number: u8,
+    /// The probe has failed and waits for a reboot (§10.2).
+    probe_dead: bool,
+    /// `node.facing` spots where moves can break the probe.
+    failures: Arc<Vec<String>>,
+    /// Minutes left that trigger the next time warning (Lingo's PercInMiss).
+    next_warning: f32,
+    /// The time ran out.
+    timed_out: bool,
 }
 
 impl Game {
@@ -148,6 +163,10 @@ impl Game {
             elapsed: 0.0,
             won: false,
             probe_number: 1,
+            probe_dead: false,
+            failures: Arc::default(),
+            next_warning: FIRST_WARNING,
+            timed_out: false,
         };
         game.show_bars();
         game
@@ -166,8 +185,90 @@ impl Game {
         &self.defender
     }
 
+    /// Add the probe failure spots (`node.facing`, the ProbeFail list).
+    pub fn with_failures(mut self, spots: Vec<String>) -> Self {
+        self.failures = Arc::new(spots);
+        self
+    }
+
+    pub fn probe_dead(&self) -> bool {
+        self.probe_dead
+    }
+
+    /// Minutes left on the clock (§12.3).
+    pub fn minutes_left(&self) -> f32 {
+        (GAME_MINUTES - self.elapsed / 60.0).max(0.0)
+    }
+
+    /// The navigation buttons: none while the probe is down.
+    pub fn buttons(&self) -> crate::NavButtons {
+        if self.probe_dead { crate::NavButtons::default() } else { self.nav.buttons() }
+    }
+
+    /// Real time passing (the clock counts through movies, as the original's
+    /// wall-clock minutes did; not while paused). Plays the time warnings
+    /// and ends the game when time runs out (Lingo's UpDateGameTime).
+    pub fn pass_time(&mut self, seconds: f32) -> Vec<Effect> {
+        if self.timed_out {
+            return Vec::new();
+        }
+        self.elapsed += seconds;
+        let left = GAME_MINUTES - self.elapsed / 60.0;
+        let mut fx = Vec::new();
+        if left < self.next_warning {
+            if self.next_warning >= 30.0 {
+                fx.push(Effect::Sound(format!("{} Min", self.next_warning as u32)));
+                self.next_warning = (self.next_warning / 2.0).floor();
+            } else if self.next_warning != 0.0 && left <= 1.0 {
+                fx.push(Effect::Sound("1 Min".into()));
+                self.next_warning = 0.0;
+            }
+        }
+        if left < 0.0 {
+            self.timed_out = true;
+            self.scan = None;
+            self.controls = None;
+            self.arm = None;
+            self.computer = None;
+            fx.extend([Effect::ErasePanel, Effect::Entering(true)]);
+            fx.extend(self.game_over());
+        }
+        fx
+    }
+
     pub fn probe_number(&self) -> u8 {
         self.probe_number
+    }
+
+    pub(crate) fn set_probe_number(&mut self, n: u8) {
+        self.probe_number = n.clamp(1, PROBES);
+    }
+
+    pub(crate) fn set_energy(&mut self, e: i32) {
+        self.energy = e.clamp(0, ENERGY_FULL);
+    }
+
+    pub(crate) fn next_warning(&self) -> f32 {
+        self.next_warning
+    }
+
+    pub(crate) fn set_next_warning(&mut self, m: f32) {
+        self.next_warning = m;
+    }
+
+    pub(crate) fn set_auto_scan(&mut self, on: bool) {
+        self.auto_scan = on;
+    }
+
+    /// After loading: every interface closed, the probe up, fresh bars.
+    pub(crate) fn after_load(&mut self) {
+        self.scan = None;
+        self.controls = None;
+        self.arm = None;
+        self.computer = None;
+        self.probe_dead = false;
+        self.timed_out = false;
+        self.show_bars();
     }
 
     /// Where the probe is, for the defender.
@@ -336,6 +437,8 @@ impl Game {
         // Any input holds the defender back (Director's timeout).
         self.defender.input();
         match action {
+            // A failed probe can't move, scan, jam or deploy the arm (§10.2).
+            Action::Nav(_) | Action::Scan | Action::Jam | Action::Arm if self.probe_dead => Vec::new(),
             Action::Jam => self.jam(),
             Action::Nav(a) => self.navigate(a),
             Action::Scan if self.scan.is_some() => self.close_scan(),
@@ -384,7 +487,6 @@ impl Game {
             let drift = self.rng.random(3) as i32 - 2;
             *bar = (*bar as i32 + drift).clamp(0, BAR_FRAMES as i32 - 1) as u8;
         }
-        self.elapsed += crate::scan::TICK;
         let probe = self.probe();
         let events = self.defender.tick(crate::scan::TICK, self.elapsed, &mut self.rng, self.skill, &probe);
         let defender_fx = self.defender_events(events);
@@ -456,6 +558,7 @@ impl Game {
         }
         let probe = self.probe();
         let moved = self.nav.line() != line && !matches!(action, NavAction::Elevator(_));
+        let movie = fx.iter().any(|e| matches!(e, Effect::Video { .. }));
         let events = if self.nav.door_open() != door {
             // The node beyond the door, for the sensors.
             let n = self.nav.node();
@@ -466,7 +569,54 @@ impl Game {
         } else {
             Vec::new()
         };
+        let caught = events.iter().any(|e| matches!(e, DefenderEvent::Caught(_)));
         fx.extend(self.defender_events(events));
+        // Lingo's InitNode, after every navigation movie: maybe a failure.
+        if movie && !caught {
+            fx.extend(self.check_failure());
+        }
+        fx
+    }
+
+    /// A probe failure at the spots on the ProbeFail list (§10.2).
+    fn check_failure(&mut self) -> Vec<Effect> {
+        let low = self.energy < LOW_ENERGY;
+        if self.probe_dead && !low {
+            self.probe_dead = false;
+            return Vec::new();
+        }
+        let here = format!("{}.{}", self.nav.node().id, self.nav.facing().index());
+        if !self.failures.contains(&here) || !(low || self.rng.random(FAILURE_CHANCE) == 1) {
+            return Vec::new();
+        }
+        // Lingo's ProbeFails.
+        self.probe_dead = true;
+        self.scan = None;
+        self.controls = None;
+        self.arm = None;
+        self.computer = None;
+        let mut fx = vec![Effect::video("Probe Failure", format!("{here}.PC"), None), Effect::Sound("SysBeeb".into())];
+        if low {
+            fx.extend([Effect::InfoClip { folder: "Misc Files".into(), name: "PowerLow".into() }, Effect::Wait(2.0)]);
+            fx.extend(self.lose_probe(true));
+        } else {
+            fx.push(Effect::InfoClip { folder: "Misc Files".into(), name: "ReBoot".into() });
+        }
+        fx
+    }
+
+    /// Lingo's RebootProbe: the light show, then the reboot movie if the
+    /// probe was down.
+    fn reboot(&mut self) -> Vec<Effect> {
+        self.controls = None;
+        let mut fx = vec![Effect::Reboot, Effect::MapMode(1)];
+        if self.probe_dead {
+            let here = format!("{}.{}", self.nav.node().id, self.nav.facing().index());
+            fx.push(Effect::video("Probe Failure", format!("{here}.RB"), None));
+            self.probe_dead = false;
+        }
+        self.show_bars();
+        fx.push(self.nav.info_clip());
         fx
     }
 
@@ -511,14 +661,23 @@ impl Game {
             None => vec![Effect::Sound("Static".into()), Effect::video("Misc Files", "DeathStatic.Paco", None)],
         };
         fx.push(Effect::video("Misc Files", "FadeToGreen.Paco", None));
+        fx.extend(self.lose_probe(false));
+        fx
+    }
+
+    /// Lingo's NewProbe: the death screen, then the next probe or the end.
+    fn lose_probe(&mut self, no_energy: bool) -> Vec<Effect> {
+        let mut fx = Vec::new();
         self.scan = None;
         self.controls = None;
         self.arm = None;
         self.computer = None;
+        self.probe_dead = false;
         // The death screen (the score's Segue frame) has no map, buttons or
         // indicators, like the Entering frame.
         fx.extend([Effect::ErasePanel, Effect::Entering(true)]);
-        fx.push(Effect::Segue { folder: "Segues".into(), name: format!("DefDeath{}", self.probe_number) });
+        let segue = if no_energy { "NoEnergy" } else { "DefDeath" };
+        fx.push(Effect::Segue { folder: "Segues".into(), name: format!("{segue}{}", self.probe_number) });
         if self.probe_number < PROBES {
             let left = (GAME_MINUTES - self.elapsed / 60.0).max(0.0) as u32;
             fx.extend([Effect::Minutes(left), Effect::Wait(2.0), Effect::Sound("Entering".into())]);
@@ -538,12 +697,48 @@ impl Game {
             fx.push(Effect::MapMode(1));
             fx.push(self.nav.info_clip());
         } else {
-            let lose = format!("Lose {}", self.rng.random(3));
-            fx.push(Effect::Segue { folder: "Misc Files".into(), name: "GameOver".into() });
-            fx.push(Effect::Entering(true));
-            fx.push(Effect::Panel { folder: "Video".into(), name: lose, keep: true });
-            fx.push(Effect::GameOver);
+            fx.extend(self.game_over());
         }
+        fx
+    }
+
+    /// The ship destroyed, then a "lose" video, then back to the title.
+    fn game_over(&mut self) -> Vec<Effect> {
+        let lose = format!("Lose {}", self.rng.random(3));
+        vec![
+            Effect::Segue { folder: "Misc Files".into(), name: "GameOver".into() },
+            Effect::Entering(true),
+            Effect::Panel { folder: "Video".into(), name: lose, keep: true },
+            Effect::GameOver,
+        ]
+    }
+
+    /// A new game's opening: the intro video, the probe entering the ship,
+    /// then play from the start (Lingo's BeginTheGame).
+    pub fn intro(&self) -> Vec<Effect> {
+        vec![
+            Effect::Entering(true),
+            Effect::Panel { folder: "Video".into(), name: "Intro".into(), keep: false },
+            Effect::Sound("Entering".into()),
+            Effect::Segue { folder: "Opening".into(), name: "Entering Ship".into() },
+            Effect::Entering(true),
+            Effect::video("Opening", "Entering Ship PPV", None),
+            Effect::Entering(false),
+            self.nav.info_clip(),
+        ]
+    }
+
+    /// Lingo's PauseGame: the scanner, arm and probe controls close.
+    pub fn pause(&mut self) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.scan.is_some() {
+            fx.extend(self.close_scan());
+        }
+        if self.arm.is_some() {
+            fx.extend(self.close_arm());
+            self.arm = None;
+        }
+        self.controls = None;
         fx
     }
 
@@ -662,6 +857,7 @@ impl Game {
                 self.controls = Some(ControlsPage::Inventory { selected: [false; KIT_SIZE] });
                 Vec::new()
             }
+            (Button::Reboot, _, Some(ControlsPage::Menu)) => self.reboot(),
             (Button::AutoScan, _, Some(ControlsPage::Menu)) => {
                 self.auto_scan = !self.auto_scan;
                 Vec::new()
@@ -853,4 +1049,57 @@ mod tests {
         assert_eq!(g.energy(), ENERGY_FULL, "manual scanning is free");
         assert!(g.scan_view().scan_box.is_some());
     }
+
+    #[test]
+    fn low_energy_failure_loses_the_probe() {
+        let mut g = game(2).with_failures(vec!["1.01.1".into()]);
+        g.set_energy(LOW_ENERGY - 1);
+        let fx = g.act(Action::Nav(NavAction::TurnRight));
+        assert!(fx.contains(&Effect::video("Probe Failure", "1.01.1.PC", None)));
+        assert!(fx.contains(&Effect::InfoClip { folder: "Misc Files".into(), name: "PowerLow".into() }));
+        assert!(fx.contains(&Effect::Segue { folder: "Segues".into(), name: "NoEnergy1".into() }));
+        assert_eq!(g.probe_number(), 2);
+        assert!(!g.probe_dead());
+    }
+
+    #[test]
+    fn failure_then_reboot() {
+        let mut g = game(2).with_failures(vec!["1.01.1".into()]);
+        let mut turns = 0;
+        while !g.probe_dead() {
+            g.set_energy(ENERGY_FULL);
+            g.act(Action::Nav(NavAction::TurnRight));
+            turns += 1;
+            assert!(turns < 4000, "never failed");
+        }
+        // Only facing East (1) is a failure spot.
+        assert_eq!(g.nav().facing(), Direction::East);
+        assert_eq!(g.buttons(), crate::NavButtons::default());
+        assert!(g.act(Action::Nav(NavAction::TurnLeft)).is_empty());
+        assert!(g.act(Action::Scan).is_empty());
+
+        g.act(Action::Controls);
+        let fx = g.act(Action::Press(Button::Reboot));
+        assert_eq!(fx[0], Effect::Reboot);
+        assert!(fx.contains(&Effect::video("Probe Failure", "1.01.1.RB", None)));
+        assert!(!g.probe_dead());
+        assert!(!g.act(Action::Nav(NavAction::TurnLeft)).is_empty());
+    }
+
+    #[test]
+    fn clock_warnings_and_time_out() {
+        let mut g = game(2);
+        let sound = |fx: &[Effect]| fx.iter().find_map(|e| if let Effect::Sound(s) = e { Some(s.clone()) } else { None });
+        assert_eq!(sound(&g.pass_time(29.0 * 60.0)), None);
+        assert_eq!(sound(&g.pass_time(2.0 * 60.0)).as_deref(), Some("60 Min"));
+        assert_eq!(sound(&g.pass_time(29.5 * 60.0)).as_deref(), Some("30 Min"));
+        // 15 minutes left passes quietly; the last warning is at one minute.
+        assert_eq!(sound(&g.pass_time(15.0 * 60.0)), None);
+        assert_eq!(sound(&g.pass_time(14.0 * 60.0)).as_deref(), Some("1 Min"));
+        assert!((g.minutes_left() - 0.5).abs() < 0.01);
+        let fx = g.pass_time(60.0);
+        assert!(fx.contains(&Effect::GameOver));
+        assert!(g.pass_time(60.0).is_empty());
+    }
+
 }

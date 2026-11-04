@@ -13,10 +13,12 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
+pub mod cue;
+
 use thiserror::Error;
 
 pub const USER_DATA: usize = 2048;
-const RAW_SECTOR: usize = 2352;
+pub(crate) const RAW_SECTOR: usize = 2352;
 const SYNC: [u8; 12] = [0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0];
 
 #[derive(Debug, Error)]

@@ -6,6 +6,8 @@
 //! gameplay frame, so nothing about the layout is guessed.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::rc::Rc;
 
 use director::Picture;
 use director::score::Frame;
@@ -67,15 +69,28 @@ const CAST_MESSAGE: u16 = 219;
 const CAST_SCAN_TEXT: u16 = 220; // active, contact, ready, seeking
 const CAST_SEGUE_SCREEN: u16 = 225;
 const CAST_KEYPAD: u16 = 233; // + key: 1-9, 10 = 0, 11 clear, 12 enter, 13 cancel
-const CAST_GAME_CONTROLS: u16 = 247; // the bar; +8 the Notes button lit
+const CAST_GAME_CONTROLS: u16 = 247; // the bar; lit: +2 Quit, +4 Save, +6 Pause, +8 Notes
+const CAST_GAME_PAUSED: u16 = 228;
+const CAST_QUIT_DIALOG: u16 = 281; // +1 its buttons; lit: +3 Quit, +5 Cancel, +7 Save
 
 /// The ambient lamp blip moves in steps of this many pixels.
 const LAMP_STEP: i32 = 18;
 /// Minutes left, on the death screen: tens and ones digits (casts 289-298).
 const CAST_DIGITS: u16 = 289;
 const MINUTES_AT: [(i32, i32); 2] = [(124, 262), (132, 262)];
-/// The Notes button on the game controls bar.
+/// The game controls bar's buttons (Lingo's GameControls).
+const QUIT_BUTTON: std::ops::Range<f32> = 0.0..74.0;
+const SAVE_BUTTON: std::ops::Range<f32> = 79.0..125.0;
+const PAUSE_BUTTON: std::ops::Range<f32> = 132.0..185.0;
 const NOTES_BUTTON: std::ops::Range<f32> = 225.0..271.0;
+/// How long a message (such as "Game saved") shows over the view.
+const TOAST_TIME: f32 = 2.5;
+/// The reboot light show (Lingo's RebootProbe): dark for 30 ticks, four
+/// 7-tick flashes, the deck maps flicking by, then 15 ticks dark.
+const REBOOT_DARK: f32 = 0.5;
+const REBOOT_STEP: f32 = 7.0 / 60.0;
+const REBOOT_MAPS: f32 = 7.0 / 30.0;
+const REBOOT_TIME: f32 = REBOOT_DARK + 4.0 * REBOOT_STEP + REBOOT_MAPS + 0.25;
 /// Where the notes appear (over the view) and how wide they may run.
 pub const NOTES_AT: (f32, f32) = (28.0, 21.0);
 pub const NOTES_WIDTH: f32 = 227.0;
@@ -120,6 +135,24 @@ type Hilite = (u16, (i32, i32));
 const NAV_ACTIONS: [NavAction; 6] =
     [NavAction::Up, NavAction::Down, NavAction::Forward, NavAction::Back, NavAction::TurnLeft, NavAction::TurnRight];
 
+/// How a game starts.
+pub enum Start {
+    /// At the start, drawn at once (testing).
+    Plain,
+    /// The intro video and the probe entering the ship.
+    Intro,
+    /// From a saved game's text.
+    Load(String),
+}
+
+/// What the reboot light show shows at a moment.
+enum RebootLook {
+    Dark,
+    Buttons,
+    Lights,
+    Map(u16),
+}
+
 /// The bridge screen (score frame `BridgeBG`) where phase movies play.
 struct Bridge {
     picture: Option<(Picture, (i32, i32))>,
@@ -128,7 +161,7 @@ struct Bridge {
 
 pub struct GameScreen {
     frame: Frame,
-    cast: Cast,
+    cast: Rc<Cast>,
     game: Game,
     bridge: Bridge,
     queue: VecDeque<Effect>,
@@ -171,6 +204,19 @@ pub struct GameScreen {
     dragging: bool,
     sounds: Sounds,
     pub status: String,
+    /// Paused (Lingo's PauseGame): any key or click carries on.
+    paused: bool,
+    /// The quit dialog is up, with the lit button while pressed.
+    quit_dialog: Option<Option<u16>>,
+    /// The player chose to quit.
+    quitting: bool,
+    /// A message over the view and how long it stays.
+    toast: Option<(String, f32)>,
+    /// The reboot light show's time so far.
+    reboot: Option<f32>,
+    /// Won on skill 5: the extended ending follows.
+    extended_ending: bool,
+    save_file: PathBuf,
 }
 
 fn loc(frame: &Frame, channel: usize) -> (i32, i32) {
@@ -178,7 +224,7 @@ fn loc(frame: &Frame, channel: usize) -> (i32, i32) {
 }
 
 impl GameScreen {
-    pub fn new(assets: &GameAssets) -> Result<Self, String> {
+    pub fn new(assets: &GameAssets, skill: u8, seed: u64, start: Start) -> Result<Self, String> {
         let score = assets.movie.score().map_err(|e| e.to_string())?;
         let frame_of = |label: &str| -> Result<Frame, String> {
             let n = assets.movie.label_frame(label).map_err(|e| e.to_string())?.ok_or(format!("no \"{label}\" frame in the score"))?;
@@ -194,7 +240,7 @@ impl GameScreen {
         });
         let bridge = Bridge { picture, movie_at: loc(&bridge_frame, CH_PANEL) };
 
-        let cast = Cast::load(&assets.movie, &assets.palette)?;
+        let cast = assets.cast.clone();
         let mut nav = Navigator::new(assets.data.nav.clone());
         *nav.access_mut() = Access::new(assets.data.clearance.clone());
         let data = ComputerData {
@@ -204,9 +250,18 @@ impl GameScreen {
             clue_notes: assets.data.clue_notes.clone(),
             notes_default: assets.data.notes_default.clone(),
         };
-        let game = Game::new(nav, assets.skill, assets.seed)
+        let mut game = Game::new(nav, skill.clamp(1, 5), seed)
             .with_computers(data)
-            .with_defender(DefenderData::new(&assets.data.defender, &assets.data.deaths));
+            .with_defender(DefenderData::new(&assets.data.defender, &assets.data.deaths))
+            .with_failures(assets.data.probe_failures.clone());
+        let opening = match start {
+            Start::Plain => game.redraw(),
+            Start::Intro => game.intro(),
+            Start::Load(text) => {
+                game.load(&text)?;
+                game.redraw()
+            }
+        };
         let mut screens = HashMap::new();
         for (cast, name) in assets.movie.cast_names().map_err(|e| e.to_string())? {
             screens.entry(name).or_insert(cast);
@@ -243,9 +298,16 @@ impl GameScreen {
             dragging: false,
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             status: String::new(),
+            paused: false,
+            quit_dialog: None,
+            quitting: false,
+            toast: None,
+            reboot: None,
+            extended_ending: false,
+            save_file: assets.save_file.clone(),
             game,
         };
-        screen.queue.extend(screen.game.redraw());
+        screen.queue.extend(opening);
         Ok(screen)
     }
 
@@ -256,6 +318,105 @@ impl GameScreen {
     /// All probes are lost and the game-over movies have played.
     pub fn finished(&self) -> bool {
         self.game_over && !self.playing()
+    }
+
+    /// The player quit (from the quit dialog).
+    pub fn quitting(&self) -> bool {
+        self.quitting
+    }
+
+    /// Won on skill 5: the Sega CD's extended ending is due.
+    pub fn extended_ending(&self) -> bool {
+        self.extended_ending
+    }
+
+    /// A message to show over the view.
+    pub fn toast(&self) -> Option<&str> {
+        self.toast.as_ref().map(|(t, _)| t.as_str())
+    }
+
+    /// Lingo's PauseGame: the scanner, arm and controls close, sound stops.
+    fn pause(&mut self) {
+        self.notes_up = false;
+        let fx = self.game.pause();
+        self.queue.extend(fx.into_iter().filter(|e| !matches!(e, Effect::Sound(_))));
+        self.sounds.stop();
+        self.paused = true;
+    }
+
+    /// Lingo's QuitGame: the quit dialog over the control screen; the
+    /// game waits.
+    fn open_quit_dialog(&mut self) {
+        self.notes_up = false;
+        self.sounds.stop();
+        self.quit_dialog = Some(None);
+    }
+
+    /// Lingo's SaveGame, to the one save slot.
+    fn save(&mut self) -> bool {
+        self.notes_up = false;
+        let text = self.game.save();
+        let result = self
+            .save_file
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|_| std::fs::write(&self.save_file, text));
+        match result {
+            Ok(()) => {
+                self.toast = Some(("Game saved.".into(), TOAST_TIME));
+                true
+            }
+            Err(e) => {
+                self.toast = Some((format!("Couldn't save: {e}"), TOAST_TIME * 2.0));
+                false
+            }
+        }
+    }
+
+    /// The quit dialog's button under a point (lit cast), by its bands.
+    fn quit_button_at(&self, x: f32, y: f32) -> Option<u16> {
+        let img = self.cast.get(CAST_QUIT_DIALOG + 1)?;
+        if !img.hit(loc(&self.frame, CH_SCREEN), x, y) {
+            return None;
+        }
+        if x < 237.0 {
+            Some(CAST_QUIT_DIALOG + 3)
+        } else if (246.0..312.0).contains(&x) {
+            Some(CAST_QUIT_DIALOG + 5)
+        } else if x > 326.0 {
+            Some(CAST_QUIT_DIALOG + 7)
+        } else {
+            None
+        }
+    }
+
+    /// Lingo's QuitHilites: Quit, Cancel or Save (then quit).
+    fn quit_choice(&mut self, lit: u16) {
+        self.quit_dialog = None;
+        match lit - CAST_QUIT_DIALOG {
+            3 => self.quitting = true,
+            7 => self.quitting = self.save(),
+            _ => {}
+        }
+    }
+
+    /// What the reboot light show shows now.
+    fn reboot_look(&self) -> Option<RebootLook> {
+        let t = self.reboot?;
+        let after_flashes = REBOOT_DARK + 4.0 * REBOOT_STEP;
+        Some(if t < REBOOT_DARK {
+            RebootLook::Dark
+        } else if t < after_flashes {
+            match ((t - REBOOT_DARK) / REBOOT_STEP) as u32 {
+                0 => RebootLook::Buttons,
+                2 => RebootLook::Lights,
+                _ => RebootLook::Dark,
+            }
+        } else if t < after_flashes + REBOOT_MAPS {
+            RebootLook::Map(((t - after_flashes) * 30.0) as u16)
+        } else {
+            RebootLook::Dark
+        })
     }
 
     /// The defender's deck and map point (6 = in a ladder).
@@ -333,6 +494,7 @@ impl GameScreen {
             || self.panel.is_some()
             || self.segue.is_some()
             || self.wait > 0.0
+            || self.reboot.is_some()
             || !self.queue.is_empty()
             || self.marker_moving()
     }
@@ -357,6 +519,18 @@ impl GameScreen {
 
     /// Mouse down or a touch starting, at stage coordinates.
     pub fn press(&mut self, x: f32, y: f32) {
+        // Any click carries on from a pause (Lingo's ContPause).
+        if self.paused {
+            self.paused = false;
+            return;
+        }
+        if self.quit_dialog.is_some() {
+            match self.quit_button_at(x, y) {
+                Some(lit) => self.quit_dialog = Some(Some(lit)),
+                None => self.queue.push_back(Effect::Sound("SysBeeb".into())),
+            }
+            return;
+        }
         if self.playing() {
             return;
         }
@@ -393,12 +567,21 @@ impl GameScreen {
 
     /// A press on the interface around the view; true if something took it.
     fn press_interface(&mut self, x: f32, y: f32) -> bool {
-        // The game controls bar: Notes (Quit, Save and Pause come with the
-        // game flow).
+        // The game controls bar: Quit, Save, Pause and Notes.
         if let Some(img) = self.cast.get(CAST_GAME_CONTROLS)
             && img.hit(loc(&self.frame, CH_GAME_CONTROLS), x, y)
         {
-            if NOTES_BUTTON.contains(&x) {
+            let lit = |n: u16| Some(((CAST_GAME_CONTROLS + n, loc(&self.frame, CH_SCREEN)), HILITE_TIME));
+            if QUIT_BUTTON.contains(&x) {
+                self.hilite = lit(2);
+                self.open_quit_dialog();
+            } else if SAVE_BUTTON.contains(&x) {
+                self.hilite = lit(4);
+                self.save();
+            } else if PAUSE_BUTTON.contains(&x) {
+                self.hilite = lit(6);
+                self.pause();
+            } else if NOTES_BUTTON.contains(&x) {
                 self.toggle_notes();
             }
             return true;
@@ -479,6 +662,10 @@ impl GameScreen {
     }
 
     pub fn release(&mut self) {
+        if let Some(Some(lit)) = self.quit_dialog {
+            self.quit_choice(lit);
+            return;
+        }
         if std::mem::take(&mut self.dragging) {
             self.act(Action::ViewRelease, None);
         }
@@ -520,10 +707,27 @@ impl GameScreen {
     /// Keyboard controls (design doc §4.8), plus testing aids.
     pub fn key(&mut self, key: macroquad::input::KeyCode) {
         use macroquad::input::KeyCode::*;
+        // Any key carries on from a pause.
+        if self.paused {
+            self.paused = false;
+            return;
+        }
+        // The quit dialog: Q quit, S save and quit, Esc cancel.
+        if self.quit_dialog.is_some() {
+            match key {
+                Q => self.quit_choice(CAST_QUIT_DIALOG + 3),
+                S => self.quit_choice(CAST_QUIT_DIALOG + 7),
+                Escape => self.quit_choice(CAST_QUIT_DIALOG + 5),
+                _ => {}
+            }
+            return;
+        }
         match key {
+            Escape if !self.busy() => self.open_quit_dialog(),
+            P if !self.busy() => self.pause(),
             // Not in the original: map mode, phase (testing), scan and controls.
             M => self.map_mode = self.map_mode % 3 + 1,
-            P => self.game.set_phase(self.game.phase() % 4 + 1),
+            F2 => self.game.set_phase(self.game.phase() % 4 + 1),
             S if !self.busy() => self.act(Action::Scan, None),
             C if !self.busy() => self.act(Action::Controls, None),
             X if !self.busy() => self.act(Action::Arm, None),
@@ -612,6 +816,25 @@ impl GameScreen {
                 self.hilite = None;
             }
         }
+        if let Some((_, t)) = &mut self.toast {
+            *t -= dt;
+            if *t <= 0.0 {
+                self.toast = None;
+            }
+        }
+        // Paused, or the quit dialog up: everything waits, the clock too.
+        if self.paused || self.quit_dialog.is_some() {
+            return;
+        }
+        // The 90-minute clock runs in real time, through movies too.
+        if !self.game_over {
+            for e in self.game.pass_time(dt) {
+                match e {
+                    Effect::Sound(s) => self.sounds.play(&s).await,
+                    e => self.queue.push_back(e),
+                }
+            }
+        }
         // The marker moves to a new deck at once and slides once a move's
         // movie is over.
         self.step_marker(false);
@@ -624,6 +847,7 @@ impl GameScreen {
             || self.segue.is_some()
             || self.bridge_movie.is_some()
             || self.wait > 0.0
+            || self.reboot.is_some()
             || !self.queue.is_empty()
             || self.entering;
         let slide = self.view.is_none()
@@ -657,6 +881,14 @@ impl GameScreen {
             if self.wait > 0.0 {
                 self.wait -= dt;
                 return;
+            }
+            if let Some(t) = &mut self.reboot {
+                *t += dt;
+                if *t < REBOOT_TIME {
+                    return;
+                }
+                self.reboot = None;
+                continue;
             }
             if let Some(p) = &mut self.bridge_movie {
                 if !p.update(dt) {
@@ -740,6 +972,8 @@ impl GameScreen {
                 Effect::Minutes(m) => self.minutes = Some(m),
                 Effect::MapMode(m) => self.map_mode = m,
                 Effect::GameOver => self.game_over = true,
+                Effect::Reboot => self.reboot = Some(0.0),
+                Effect::ExtendedEnding => self.extended_ending = true,
                 Effect::Entering(on) => {
                     self.entering = on;
                     self.segue_still = None;
@@ -795,7 +1029,7 @@ impl GameScreen {
 
     /// Cast to show on each navigation button (None = hidden).
     fn button_casts(&self) -> [Option<u16>; 6] {
-        let b = self.game.nav().buttons();
+        let b = self.game.buttons();
         let shown = [b.up, b.down, b.forward, b.back, b.left, b.right];
         let double = self.game.nav().repeat() as u16;
         std::array::from_fn(|i| {
@@ -848,8 +1082,8 @@ impl GameScreen {
 
         // The view window, with the scan box and the arm (channel 2) over it;
         // the interface frame (channel 3) covers what reaches outside.
-        if let (Some(img), Some((pixels, width))) =
-            (self.cast.get(self.frame.sprite(CH_VIEW).map_or(0, |s| s.cast)), self.view_frame())
+        if let (Some(img), Some((pixels, width)), None) =
+            (self.cast.get(self.frame.sprite(CH_VIEW).map_or(0, |s| s.cast)), self.view_frame(), self.reboot)
         {
             let (left, top) = img.top_left(loc(&self.frame, CH_VIEW));
             let (ix, iy, _, _) = VIEW_INNER;
@@ -887,6 +1121,24 @@ impl GameScreen {
         {
             let cast = if frame >= 6 { CAST_SCAN_HIT } else { CAST_SCAN_MARKER + frame as u16 };
             self.draw_cast(canvas, cast, at, true);
+        }
+
+        // The reboot light show: the interface dark but for its flashes.
+        if let Some(look) = self.reboot_look() {
+            match look {
+                RebootLook::Dark => {}
+                RebootLook::Buttons => {
+                    for i in 0..6 {
+                        self.draw_cast(canvas, CAST_NAV_BUTTONS + i as u16 * 3, loc(&self.frame, CH_NAV_FIRST + i), true);
+                    }
+                }
+                RebootLook::Lights => {
+                    self.draw_cast(canvas, CAST_FUNCTION + 1, loc(&self.frame, CH_FUNCTION), true);
+                    self.draw_cast(canvas, CAST_MODE_BUTTON, loc(&self.frame, CH_MODE), false);
+                }
+                RebootLook::Map(n) => self.draw_cast(canvas, CAST_LEVEL_MAPS + n.min(6), loc(&self.frame, CH_MAP), false),
+            }
+            return;
         }
 
         // Control screen: node screen, door/elevator panel, scan interface
@@ -1056,6 +1308,17 @@ impl GameScreen {
             }
         }
         self.draw_segues(canvas);
+
+        // Paused: "Game Paused" over the interface. The quit dialog sits on
+        // the control screen.
+        if self.paused {
+            self.draw_cast(canvas, CAST_SEGUE_SCREEN, screen_loc, true);
+            self.draw_cast(canvas, CAST_GAME_PAUSED, screen_loc, true);
+        }
+        if let Some(lit) = self.quit_dialog {
+            self.draw_cast(canvas, CAST_QUIT_DIALOG, screen_loc, false);
+            self.draw_cast(canvas, lit.unwrap_or(CAST_QUIT_DIALOG + 1), screen_loc, true);
+        }
     }
 
     /// A segue (playing, or its last frame) and the minutes left over it.

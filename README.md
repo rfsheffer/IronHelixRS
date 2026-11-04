@@ -17,7 +17,7 @@ crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Seg
 crates/director      library: Director 3 movies in resource forks (cast, text members, score scripts, labels)
 crates/helixdb       library: the game's data tables (navigation graph, defender, deaths, computers)
 crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
-crates/helix-core    the game rules, no graphics or audio (navigation so far)
+crates/helix-core    the game rules, no graphics or audio
 crates/helix-app     the game itself (`ironhelix`), built on macroquad for desktop and mobile
 ../Reference         original game files (not in the repo)
 out/                 generated output (gitignored)
@@ -25,7 +25,8 @@ out/                 generated output (gitignored)
 
 ## Running the game: `ironhelix`
 
-You can explore the whole ship: the original interface (laid out from the Director score), the
+The whole game plays: the opening, the title screen (skill 1-5, begin, load, replay the intro,
+about, quit), and the game in the original interface (laid out from the Director score), with the
 navigation buttons, movement movies and sounds, location strips, doors, ladders, elevators and
 the map in all three modes. Scanning works (auto and manual, enhance and acquire), along with the
 DNA kit and probe controls, door clearance, the energy bar and the phase changes, whose movies
@@ -36,13 +37,17 @@ screens, video messages (clues), and the actions, including the ones aimed at th
 the ship by its own map, comes for the probe when a door opens with the sensors on, warns with
 the lamp and its sounds as it nears, can be jammed, trapped, turned off or thrown out, comes back
 five minutes later, and catches the probe with the original's death scenes; after three probes
-the game is over (a new game starts, until there's a title screen). The Notes button (or N)
-shows the codes the video messages have given, over the view. See
-[docs/design.md](docs/design.md).
+the game is over and it's back to the title. Probes break down now and then at certain spots
+(1 in 50, or for certain with the power nearly gone) and come back with a reboot from the probe
+controls. The 90-minute clock runs in real time with its spoken warnings at 60, 30 and 1
+minutes left, and ends the game when it runs out. The game controls bar works: Quit (Quit,
+Cancel or Save and quit), Save, Pause and Notes (the codes the video messages have given, over
+the view). See [docs/design.md](docs/design.md).
 
 ```
 cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
-    [--pc-files <HELIX>] [--skill 1-5] [--seed N]
+    [--pc-files <HELIX>] [--sega-cue <cue>] [--sega-files <folder>] [--save <file>]
+    [--skill 1-5] [--seed N] [--skip-title]
 ```
 
 Defaults are the `out/mac/...` folders the extraction steps below create (sounds come from the
@@ -53,9 +58,19 @@ exists) the game adds the **PC release's hidden rooms**: 2.42/2.43 behind the "Z
 door at 2.08 south, and the stasis room 4.08/4.09 behind 4.05 north. Their node data is read
 from the player's `HELIX.EXE` and their movies from the PC CD. As on the PC, those
 battle-damaged doors open on deck 2 from phase 2 and on deck 4 in phase 3 (design doc §14.4);
-until phases are played, **P** cycles the phase for testing. The PC shipped German location
+until phases are played, **F2** cycles the phase for testing. The PC shipped German location
 strips for the stasis room in its English folder; the game rebuilds English ones from two
 English strips as they load.
+
+With the Sega CD (`--sega-cue`, default `../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix
+(US).cue` when it exists) the title plays the **Sega CD's theme** from the disc image's audio
+track 2 (44.1 kHz stereo) in place of the Mac's tune. With its extracted files (`--sega-files`,
+default `out/sega/files`), **winning on skill 5** goes on to the Sega CD's **extended ending**
+(`SEGUES/ENDING.SEG`, 98 s) after the win movie.
+
+The game saves to one slot, `IronHelix/save.txt` in the user's application data folder
+(`%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.local/share` elsewhere),
+or `--save <file>`; Load Saved Game on the title screen picks it up.
 
 Controls: click or tap the arrows, the function buttons (Scan, Arm, CTRL), the control screen's
 panels and the map mode switch; with the scanner on, click (auto scan) or drag (manual scan) in
@@ -63,21 +78,24 @@ the view; with the arm out, press and drag in the view to move it onto a port. K
 and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevator floor (facing
 the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not in the original,
 S scan, X arm, C probe controls, M map mode, Enter on the keypad. Space or the Jam button jams
-the defender; N shows the notes. The notes use the default font here; the original draws them in
-9-point Geneva. F pixel-perfect scaling, H
-debug overlay, Esc quit. The skill level (default 1) picks the scan table and video clues until
-the title screen exists. Computer codes show in a small built-in font; the original draws them
-with Mac text.
+the defender; N shows the notes; P pauses; Esc brings up the quit dialog (Q quit, S save and
+quit, Esc cancel). The notes use the default font here; the original draws them in 9-point
+Geneva. F pixel-perfect scaling, H debug overlay. On the title screen: 1-5 skill, Enter begin,
+Esc quit; a click or key skips the opening movies. `--skill` picks the title's starting skill,
+`--skip-title` goes straight into a game. Computer codes show in a small built-in font; the
+original draws them with Mac text.
 
 Testing aids: `--window 2400x1080` tries other screen shapes; `--autoplay "SK(400,60)A"` plays a
-sequence of steps (F/B forward/back, L/R turn, U/D ladder, O door, 1-6 elevator, M map mode,
-P phase, S scan, X arm, C controls, K click the scan point (or, with the arm out, the port), A
+sequence of steps in a game (with `--title`, starting at the title screen, a step every half
+second: a click there skips a movie) (F/B forward/back, L/R turn, U/D ladder, O door, 1-6
+elevator, M map mode, P phase, S scan, X arm, C controls, K click the scan point (or, with the arm out, the port), A
 acquire, G grant DNA 01/02/10 and skip to phase 2 like the original's debug keys, Y be caught by
 the defender, J jam, N notes, digits on the keypad, `(x,y)` a click at stage coordinates);
 `--screenshot <png>` saves the screen (after the autoplay, or after a few seconds; or at
-`--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--debug` starts with the
-overlay on (skill, energy, DNA kit, phase, probe, the defender's node, warning level and plan,
-this game's codes and video clues, defender tasks).
+`--screenshot-frame N`) and exits; `--seed N` makes a run repeatable; `--play-ending` plays the
+Sega CD ending at once; `--debug` starts with the overlay on (skill, energy, DNA kit, minutes
+left, a failed probe, phase, probe, the defender's node, warning level and plan, this game's
+codes and video clues, defender tasks).
 
 The stage is the original **512×384 (4:3)**, scaled to fit the screen and centered. On wider
 screens the space on each side is filled with artwork from **`assets/side_panel.png`** (a plain

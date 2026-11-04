@@ -463,6 +463,11 @@ Door sensors off (§8.5) uses the same 5-minute timer; the sensors come back on 
 - If energy is low: "power low" message, then the probe is lost (§10.3, no-energy segue).
 - Otherwise "reboot" message: the player reboots from probe controls: a boot-up light show over
   the interface, then `Probe Failure:<node>.<facing>.RB`, then normal play resumes.
+- While the probe is down it can't move, scan, jam or deploy the arm; the probe controls (and
+  the computer screens already open) still work. Reboot works any time and just plays the light
+  show when the probe is fine. (Lingo's `InitNode`, `ProbeFails`, `RebootProbe`.) The check runs
+  after every navigation movie; the arrival after a failure clears a stale failure flag, as the
+  script does.
 
 ### 10.3 Losing a probe ✅
 
@@ -494,8 +499,12 @@ back to the title.
 ### 12.1 Startup ✅
 
 `Opening:OpenCreditsAndTitle` → bridge background + `Opening:OPENING` → title screen with the
-theme looping. Title: skill buttons, Begin, Load saved game, Replay intro, About
-(`Segues:About`), Quit (`Segues:Credits` then exit).
+theme (played once, as `sound playfile` does). Title (score frame `BootUp`, the menu `NEWSTARTUP.PS`
+over the bridge): five skill buttons (channels 10-14, casts 258-266, +1 lit), Begin, Load saved
+game, Replay intro, Quit, About (channels 15-19, casts 268-276, +1 pressed; each lights for 15
+ticks before acting). About (`Segues:About` at 88,61 on black) stays until a key or click; Quit
+plays `Segues:Credits` there, then exits. The new engine lets a click or key skip the opening
+movies and the credits.
 
 ### 12.2 New game ✅
 
@@ -507,14 +516,21 @@ reset; door sensors active; defender on; clock starts (90 min); probe 1. Plays `
 
 - 90 real minutes. Spoken warnings when 60, 30 and 1 minute remain (`60 Min`, `30 Min`,
   `1 Min`). A `15 min` sound ships but the script never reaches it.
-- Pausing (and the quit dialog) stops the clock.
+- Pausing (and the quit dialog) stops the clock. The original reads the wall clock in whole
+  minutes, so it also runs through movies; the new engine counts real seconds the same way
+  (`Game::pass_time`, every frame but paused ones). The installed sound files are named in
+  lower case (`60 min`); sounds are matched without case.
 - The ETA screen places the ship icon along a line by fraction of time used.
 - Time out: `GameOver` + random `Lose` video.
 
 ### 12.4 Game controls ✅
 
 Quit (dialog: Quit / Cancel / Save & Quit), Save, Pause (any key/click resumes), Notes (overlay
-of the notes field on the control screen; not while scanning).
+of the notes field on the control screen; not while scanning). Bands by x on the bar: Quit
+< 74, Save 79-125, Pause 132-185, Notes 225-271; lit casts 249/251/253/255. The quit dialog is
+cast 281 with its buttons 282 over the control screen (lit 284 Quit if x < 237, 286 Cancel
+246-312, 288 Save > 326). Pause closes the scanner, arm and controls and shows `Segue` (225)
+with `Game Paused` (228).
 
 ### 12.5 Save game contents ✅
 
@@ -523,6 +539,13 @@ played, warning-interval state, skill; defender return time, defender tasks, tas
 defender-off flag; DNA kit; probe line and defender line; clue list; clues available; door
 sensors and the codes; notes text. Loading restores these and replays a turn video to redraw the
 view. The new engine can use its own format.
+
+The new engine saves one slot as `key=value` text (`helix-core` `Game::save`/`load`, header
+`Iron Helix save 1`): skill, probe, node line, facing, phase, energy, seconds played, next
+warning, auto scan, DNA kit, clue list, clues seen, notes, the codes, and the defender's line,
+off and trapped flags, door sensors, tasks and whether a return timer runs. As in
+`LoadSavedGame`, a running return timer restarts at four minutes and queued tasks answer a
+minute after loading. The file lives in the user's application data folder (`IronHelix/save.txt`).
 
 ---
 
@@ -647,11 +670,15 @@ title) and the PC's 11 kHz `RIH_TUNE.WAV`. It replaces both. The extended ending
 **when the game is won on the hardest skill (5)**, per the user's memory of the Sega release
 (not checked in the Sega code).
 
+Both are in: the theme is read from the cue sheet's track 2 (`cdimage::cue`), and the ending is
+decoded frame by frame as it plays, its 8:7 pixels scaled to the stage's width (512×364,
+centered), with its 16,276 Hz sound.
+
 ---
 
 ## 15. Open questions
 
-- ❓ Number of skill buttons on the title screen (data supports 5).
+- ✅ Number of skill buttons on the title screen: five (score channels 10-14).
 - ❓ Node 2.19 carries large values in the elevator columns; probably unused or map-related.
 - ❓ Second Scan item per facing (the scripts read only the first); may be unused.
 - ❓ Exact meaning of the remaining Cmp "vars" items and Def items not read by the scripts.
@@ -673,19 +700,22 @@ cast's sounds (`snd `) and pictures (`PICT`, the bridge background). The probe a
 jamming, door alerts, tasks, being disabled and coming back, being caught) are done, with losing
 probes and game over (§10.3) and the Notes button (§8.3: the notes stamp over the view at (28, 21)
 until the next action). The death, entering, game-over and win sequences use their own score
-frames (Segue, Entering, WinFrame), which have no map, buttons or indicators. Next: probe failure (§10.2), the clock (§12.3), notes, and the game
-flow around it (title, skill choice, save/load, winning).
+frames (Segue, Entering, WinFrame), which have no map, buttons or indicators. Probe failure and
+the reboot (§10.2), the clock and its warnings (§12.3), saving and loading (§12.5, helix-core
+`save`) and the game flow around them (the opening, title and skill choice, pause, the quit
+dialog, `helix-app` `title`) are done, with the Sega CD theme and extended ending (§14.4,
+`helix-app` `ending`). Every step below is in; what's left is play-testing against the original.
 
 1. **Data** (done): `director` reads the projector; `helixdb` parses the tables.
-2. **Rules core** (no graphics; step 1 done): a deterministic `Game` with the probe, defender, DNA kit,
+2. **Rules core** (no graphics; done): a deterministic `Game` with the probe, defender, DNA kit,
    phase, clock and energy; `apply(Action) -> Vec<Effect>` where effects are "play video X",
    "play sound Y", "show message Z". Seeded RNG. Unit tests per section of this document.
 3. **Defender** (done): path planner over the Def tree (§9.3), timers (§9.1), warning levels (§9.4).
 4. **Probe arm** (§7, done): computers are reached through it.
 5. **Computer** (done): record interpreter (§8), keypad, tasks.
-6. **Presentation**: window, view-window video playback (decoded PACo frames), control screen
+6. **Presentation** (done): window, view-window video playback (decoded PACo frames), control screen
    artwork from the Director cast, map, input.
-7. **Asset mapping**: Mac names → PC/Sega files for the definitive edition; Sega exclusives.
+7. **Asset mapping** (done): Mac names → PC/Sega files for the definitive edition; Sega exclusives.
    Per §14.4: a movie resolver (Mac, then PC names); read the PC node records from the
    player's `HELIX.EXE` and append the four hidden rooms to the graph; phase-locked doors; the
    Sega theme from the disc image's audio track; `ENDING.SEG` after a skill-5 win.

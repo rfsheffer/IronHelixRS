@@ -9,7 +9,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::rc::Rc;
+
 use director::Movie;
+
+use crate::sprites::Cast;
 use helixdb::{GameData, GameFiles};
 
 pub struct Paths {
@@ -25,16 +29,40 @@ pub struct Paths {
     pub side_panel: PathBuf,
     /// Save a screenshot after a few seconds and quit (for checking layouts).
     pub screenshot: Option<PathBuf>,
-    /// Skill level 1-5 (until the title screen picks it).
+    /// The skill level the title screen starts on (1-5).
     pub skill: u8,
     /// Random seed; from the clock unless given.
     pub seed: u64,
+    /// The Sega CD disc image's cue sheet, for its theme music (optional).
+    pub sega_cue: Option<PathBuf>,
+    /// Files extracted from the Sega CD, for its extended ending (optional).
+    pub sega_files: Option<PathBuf>,
+    /// Where the game is saved.
+    pub save_file: PathBuf,
+    /// Start playing at once, without the opening and title screen.
+    pub skip_title: bool,
+}
+
+/// The save file's usual place: the user's application data folder.
+fn default_save_file() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    };
+    base.unwrap_or_default().join("IronHelix").join("save.txt")
 }
 
 impl Paths {
     /// `--mac-app <file>`, `--mac-files <folder>`, `--mac-sounds <folder>`,
     /// `--pc-files <folder>`, `--side-panel <png>`, `--screenshot <png>`,
-    /// `--skill <1-5>`, `--seed <n>`.
+    /// `--skill <1-5>`, `--seed <n>`, `--sega-cue <cue>`, `--sega-files <folder>`,
+    /// `--save <file>`, `--skip-title` (also implied by `--autoplay` without
+    /// `--title`).
     pub fn from_args() -> Self {
         let mut p = Self {
             mac_app: PathBuf::from("out/mac/app/Iron Helix™/Iron Helix™.rsrc"),
@@ -45,6 +73,10 @@ impl Paths {
             screenshot: None,
             skill: 1,
             seed: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64),
+            sega_cue: Some(PathBuf::from("../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue")).filter(|p| p.is_file()),
+            sega_files: Some(PathBuf::from("out/sega/files")).filter(|p| p.is_dir()),
+            save_file: default_save_file(),
+            skip_title: false,
         };
         let args: Vec<String> = std::env::args().collect();
         let mut sounds = None;
@@ -58,9 +90,15 @@ impl Paths {
                 "--screenshot" => p.screenshot = Some(PathBuf::from(&pair[1])),
                 "--skill" => p.skill = pair[1].parse().unwrap_or(1),
                 "--seed" => p.seed = pair[1].parse().unwrap_or(1),
+                "--sega-cue" => p.sega_cue = Some(PathBuf::from(&pair[1])),
+                "--sega-files" => p.sega_files = Some(PathBuf::from(&pair[1])),
+                "--save" => p.save_file = PathBuf::from(&pair[1]),
                 _ => {}
             }
         }
+        // Autoplay starts in the game, unless `--title` asks for the title.
+        let has = |flag: &str| args.iter().any(|a| a == flag);
+        p.skip_title = has("--skip-title") || (has("--autoplay") && !has("--title"));
         p.mac_sounds = sounds.unwrap_or_else(|| {
             p.mac_app.parent().map(|d| d.join("Iron Helix Sounds")).unwrap_or_default()
         });
@@ -73,7 +111,6 @@ pub struct GameAssets {
     pub data: GameData,
     pub stage_w: usize,
     pub stage_h: usize,
-    pub palette: paco::Palette,
     pub files: GameFiles,
     pub mac_sounds: PathBuf,
     /// Nodes added from the PC release (empty without it).
@@ -82,6 +119,15 @@ pub struct GameAssets {
     pub cast_sounds: HashMap<String, Vec<u8>>,
     pub skill: u8,
     pub seed: u64,
+    /// The cast bitmaps, shared by the screens.
+    pub cast: Rc<Cast>,
+    /// The title theme as a WAV: the Sega CD's track 2 if given, else the
+    /// Mac's tune.
+    pub theme: Option<Vec<u8>>,
+    /// The Sega CD's extended ending movie, if its files are given.
+    pub ending: Option<PathBuf>,
+    pub save_file: PathBuf,
+    pub skip_title: bool,
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
@@ -117,14 +163,20 @@ impl GameAssets {
                 cast_sounds.insert(name, crate::sound::pcm8_to_wav(snd.rate, &snd.samples));
             }
         }
+        let cast = Rc::new(Cast::load(&movie, &paco::Palette::mac_system())?);
+        let files = GameFiles::new(&paths.mac_files, paths.pc_files.as_deref())
+            .with_installed(paths.mac_app.parent().map(Path::to_path_buf).unwrap_or_default());
         Ok(Self {
+            theme: load_theme(paths.sega_cue.as_deref(), &files),
+            ending: paths.sega_files.as_ref().map(|f| f.join("SEGUES").join("ENDING.SEG")).filter(|p| p.is_file()),
+            cast,
+            save_file: paths.save_file.clone(),
+            skip_title: paths.skip_title,
             movie,
             data,
             stage_w,
             stage_h,
-            palette: paco::Palette::mac_system(),
-            files: GameFiles::new(&paths.mac_files, paths.pc_files.as_deref())
-                .with_installed(paths.mac_app.parent().map(Path::to_path_buf).unwrap_or_default()),
+            files,
             mac_sounds: paths.mac_sounds.clone(),
             pc_rooms,
             cast_sounds,
@@ -133,9 +185,27 @@ impl GameAssets {
         })
     }
 
+    /// The saved game, if there is one.
+    pub fn saved_game(&self) -> Option<String> {
+        fs::read_to_string(&self.save_file).ok()
+    }
+
     /// Path of a movie or clip by its Mac folder (`/`-separated) and name,
     /// from whichever release has it.
     pub fn file(&self, folder: &str, name: &str) -> PathBuf {
         self.files.find(folder, name).unwrap_or_else(|| self.files.mac_path(folder, name))
     }
+}
+
+/// The theme music: the Sega CD's audio track 2 (44.1 kHz stereo), else the
+/// Mac CD's `Opening:Iron Helix™ Tune` (§14.4).
+fn load_theme(sega_cue: Option<&Path>, files: &GameFiles) -> Option<Vec<u8>> {
+    if let Some(cue) = sega_cue {
+        match cdimage::cue::audio_track(cue, 2) {
+            Ok(pcm) => return Some(crate::sound::wav(2, 16, cdimage::cue::CD_AUDIO_RATE, &pcm)),
+            Err(e) => eprintln!("Sega CD theme: {e}"),
+        }
+    }
+    let tune = files.find("Opening", "Iron Helix™ Tune")?;
+    crate::sound::aiff_to_wav(&fs::read(tune).ok()?)
 }

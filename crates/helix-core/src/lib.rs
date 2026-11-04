@@ -15,6 +15,7 @@ pub mod defender;
 pub mod game;
 pub mod nav;
 pub mod rng;
+pub mod save;
 pub mod scan;
 
 pub use access::Access;
@@ -66,6 +67,11 @@ pub enum Effect {
     Entering(bool),
     /// All probes lost (or the game won): back to the title.
     GameOver,
+    /// The light show of a probe rebooting: buttons, lights and map go
+    /// dark and flash back (Lingo's RebootProbe).
+    Reboot,
+    /// A skill-5 win: the extended ending (the Sega CD's), where available.
+    ExtendedEnding,
 }
 
 impl Effect {

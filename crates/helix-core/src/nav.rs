@@ -119,14 +119,21 @@ impl Navigator {
         self.door_open
     }
 
-    /// A new probe enters: back at the start, facing North.
-    pub fn restart(&mut self) {
-        self.line = START_LINE;
-        self.facing = Direction::North;
-        self.in_ladder = false;
+    /// Put the probe at a node line and facing (loading a saved game).
+    pub fn place(&mut self, line: usize, facing: Direction) {
+        if self.graph.at_line(line).is_some() {
+            self.line = line;
+        }
+        self.facing = facing;
+        self.in_ladder = self.node().is_ladder();
         self.door_open = false;
         self.repeat = false;
         self.chute_open = false;
+    }
+
+    /// A new probe enters: back at the start, facing North.
+    pub fn restart(&mut self) {
+        self.place(START_LINE, Direction::North);
     }
 
     pub fn in_ladder(&self) -> bool {

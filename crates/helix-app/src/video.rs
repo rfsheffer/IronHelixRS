@@ -78,6 +78,12 @@ impl Player {
         true
     }
 
+    /// Jump to the end (the next update reports it finished).
+    pub fn finish(&mut self) {
+        self.frame = self.clip.frames.len().saturating_sub(1);
+        self.elapsed = f32::MAX;
+    }
+
     pub fn current(&self) -> Option<&[u8]> {
         self.clip.frames.get(self.frame).map(|(p, _)| p.as_slice())
     }

@@ -51,7 +51,7 @@ pub fn pcm8_to_wav(rate: u32, samples: &[u8]) -> Vec<u8> {
     wav(1, 8, rate, samples)
 }
 
-fn wav(channels: u16, bits: u16, rate: u32, data: &[u8]) -> Vec<u8> {
+pub fn wav(channels: u16, bits: u16, rate: u32, data: &[u8]) -> Vec<u8> {
     let block = channels * bits / 8;
     let mut wav = Vec::with_capacity(44 + data.len());
     wav.extend_from_slice(b"RIFF");
@@ -116,7 +116,13 @@ impl Sounds {
 
     pub async fn play(&mut self, name: &str) {
         if !self.loaded.contains_key(name) {
-            let installed = std::fs::read(self.folder.join(name)).ok().and_then(|a| aiff_to_wav(&a));
+            // The installed files' names differ in case from the scripts'
+            // ("60 min" for "60 Min").
+            let installed = std::fs::read_dir(&self.folder)
+                .ok()
+                .and_then(|dir| dir.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name)))
+                .and_then(|e| std::fs::read(e.path()).ok())
+                .and_then(|a| aiff_to_wav(&a));
             // Director matches member names without case ("Menu Sound").
             let cast = self.cast.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, wav)| wav.clone());
             let sound = match installed.or(cast) {

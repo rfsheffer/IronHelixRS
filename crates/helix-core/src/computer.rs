@@ -548,6 +548,8 @@ impl Game {
             Effect::ErasePanel,
             Effect::Entering(true),
             Effect::Panel { folder: "Video".into(), name: video, keep: true },
+            // On the hardest skill, the Sega CD's extended ending (§14.4).
+            if self.skill == 5 { Effect::ExtendedEnding } else { Effect::Wait(0.0) },
             Effect::GameOver,
         ]
     }

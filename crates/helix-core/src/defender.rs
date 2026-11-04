@@ -276,6 +276,32 @@ impl Defender {
         !self.off && !(self.jammed && self.blink)
     }
 
+    /// Restore from a saved game. A return timer that was running restarts
+    /// at four minutes and queued tasks get their answer in a minute, as the
+    /// original's LoadSavedGame does.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn restore(&mut self, line: usize, off: bool, trapped: bool, sensors: Sensors, tasks: Vec<String>, returning: bool, now: f32) {
+        self.line = line;
+        self.prev_line = line;
+        self.path.clear();
+        self.los.clear();
+        self.sight = self.data.item(self.line, 7).to_string();
+        self.off = off;
+        self.trapped = trapped;
+        self.sensors = sensors;
+        self.task_at = (!tasks.is_empty()).then_some(now + TASK_SECONDS);
+        self.tasks = tasks;
+        self.back_at = returning.then_some(now + 4.0 * 60.0);
+    }
+
+    pub(crate) fn sensors(&self) -> Sensors {
+        self.sensors
+    }
+
+    pub(crate) fn returning(&self) -> bool {
+        self.back_at.is_some()
+    }
+
     /// A new probe: back to the start with no plan (Lingo's InitVars and
     /// InitDBs); tasks and return timers carry over.
     pub(crate) fn restart(&mut self) {
@@ -376,6 +402,10 @@ impl Defender {
         let target_level = deck(target);
         let mut s = Search { data, pos: self.line, node: node_number(self.id()), path: Vec::new(), los: Vec::new(), too_long: false };
         let level = self.level();
+        // No defender table (or no such deck): nowhere to go.
+        if level == 0 || target_level == 0 {
+            return (Vec::new(), Vec::new(), false);
+        }
 
         if target_level != level {
             if !self.in_ladder() {
