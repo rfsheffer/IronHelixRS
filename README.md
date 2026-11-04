@@ -125,6 +125,7 @@ target/release/paco check  <dir>                 decode everything, report failu
 Example: `target/release/paco export ../Reference/Game/Windows/HELIX -o out/windows`
 
 `paco digest <dir>` prints a hash of each movie's decoded pixels, for comparing releases.
+`paco timing <dir>` compares each movie's frame delays with its sound's length.
 
 ## Getting the Mac files out: `macx`
 

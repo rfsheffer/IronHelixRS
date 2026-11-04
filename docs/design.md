@@ -573,6 +573,14 @@ to the title. Outside those conditions the ending is rejected and the defender r
 | `Opening/` | intro, title, `Entering Ship (PPV)`, `Phase1-3` |
 | `Misc Files/` (installed) | `DeathStatic`, `FadeToGreen`, `GameOver`, `EndofShip`, `Incin`, `MessgText`, `Paused`, `PowerLow`, `ReBoot`, `UnableDeploy` |
 
+**Timing.** A movie's frames normally show for their delays. Movies whose header lacks the
+"maintain frame rate" flag are paced by their sound instead, which runs 2-21% longer than the
+delays add up to: on the Mac, `Opening:OPENING` (108.7 s of delays, 131.5 s of sound), ten
+`Video:` clue messages and `Computer:RightLoc/WrongLoc.Eject`; on the PC also `SEGUES:GAMEOVER`
+and `ENDSHIP`. `Computer:Eject` runs 22% long with the flag set; every other flagged movie is
+within 5%. The game stretches such movies' frames to the sound's length (`paco timing <dir>`
+lists the numbers).
+
 ### 14.2 Sounds
 
 Installed AIFF sounds: `1/15/30/60 min`, `Access Denied`, `Acquire`, `Air Latch Open/Close`,

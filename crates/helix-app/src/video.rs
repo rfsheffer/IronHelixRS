@@ -32,9 +32,23 @@ impl Clip {
             .decode_all()
             .map_err(|e| format!("{}: {e}", path.display()))?;
         let mut clip = Self::from_frames(&frames);
-        clip.audio = movie
-            .audio()
-            .map(|a| (path.display().to_string(), crate::sound::pcm8_to_wav(a.sample_rate, &a.samples)));
+        let audio = movie.audio();
+        // Without the header's "maintain frame rate" flag the original player
+        // paces the pictures by the sound, which runs 2-21% longer than the
+        // frame delays add up to in those movies (the opening, some video
+        // messages, the eject clips): stretch the frames to match. One movie
+        // with the flag (Computer:Eject) runs 22% long the same way; the
+        // others with it are within 5%.
+        if let Some(a) = &audio {
+            let sound = a.samples.len() as f32 / a.sample_rate as f32;
+            let frames: f32 = clip.frames.iter().map(|(_, d)| d).sum();
+            let paced_by_sound = !movie.header.maintain_framerate() || sound > frames * 1.15;
+            if paced_by_sound && frames > 0.0 && sound > frames {
+                let stretch = sound / frames;
+                clip.frames.iter_mut().for_each(|(_, d)| *d *= stretch);
+            }
+        }
+        clip.audio = audio.map(|a| (path.display().to_string(), crate::sound::pcm8_to_wav(a.sample_rate, &a.samples)));
         Ok(clip)
     }
 
@@ -86,5 +100,23 @@ impl Player {
 
     pub fn current(&self) -> Option<&[u8]> {
         self.clip.frames.get(self.frame).map(|(p, _)| p.as_slice())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The opening's frames last as long as its sound (it has no "maintain
+    /// frame rate" flag). Needs the extracted Mac files; skipped without.
+    #[test]
+    fn opening_frames_follow_the_sound() {
+        let path = Path::new("../../out/mac/files/Iron Helix™ Files/Opening/OPENING");
+        let Ok(clip) = Clip::load(path) else { return };
+        let frames: f32 = clip.frames.iter().map(|(_, d)| d).sum();
+        let (_, wav) = clip.audio.expect("the opening has sound");
+        let sound = (wav.len() - 44) as f32 / 11_025.0;
+        assert!((frames - sound).abs() < 0.1, "frames {frames:.2} s, sound {sound:.2} s");
+        assert!(frames > 130.0);
     }
 }

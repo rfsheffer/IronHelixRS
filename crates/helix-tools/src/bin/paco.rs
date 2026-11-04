@@ -62,6 +62,8 @@ enum Command {
     Check { dir: PathBuf },
     /// Print a hash of each movie's decoded pixels (TSV), for comparing releases.
     Digest { dir: PathBuf },
+    /// For each movie with sound, its frames' running time against its sound's (TSV).
+    Timing { dir: PathBuf },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -99,7 +101,40 @@ fn main() -> Result<()> {
         Command::Export { dir, out } => export(&dir, &out, opts),
         Command::Check { dir } => check(&dir, opts),
         Command::Digest { dir } => digest(&dir, opts),
+        Command::Timing { dir } => timing(&dir),
     }
+}
+
+/// Frame delays add up to less than the sound in some movies; this shows by
+/// how much, with the header's "maintain frame rate" flag.
+fn timing(dir: &Path) -> Result<()> {
+    println!("path	frames	video_s	audio_s	audio/video	maintain_framerate	rate_hz");
+    for file in &collect_files(dir)? {
+        let Ok(movie) = Movie::parse(&fs::read(file)?) else { continue };
+        let Some(audio) = movie.audio() else { continue };
+        let (mut default_ms, mut next_ms, mut video_ms, mut frames) = (movie.header.default_frame_ms(), None, 0.0, 0);
+        for op in movie.ops() {
+            match op {
+                Op::Delay(d) if d.persist() => default_ms = d.frame_ms(),
+                Op::Delay(d) => next_ms = Some(d.frame_ms()),
+                Op::Bitmap(_) => {
+                    video_ms += next_ms.take().unwrap_or(default_ms);
+                    frames += 1;
+                }
+                _ => {}
+            }
+        }
+        let audio_s = audio.samples.len() as f64 / audio.sample_rate as f64;
+        println!(
+            "{}	{frames}	{:.2}	{audio_s:.2}	{:.3}	{}	{}",
+            file.strip_prefix(dir)?.display(),
+            video_ms / 1000.0,
+            audio_s * 1000.0 / video_ms.max(1.0),
+            movie.header.maintain_framerate(),
+            audio.sample_rate
+        );
+    }
+    Ok(())
 }
 
 /// One line per movie: path, size, frame count, a hash of all decoded frames
