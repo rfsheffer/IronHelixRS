@@ -16,8 +16,13 @@ pub const TICK: f32 = 1.0 / 30.0;
 const BOX_START: (i32, i32) = (141, 80);
 /// The area the box can move in: left, top, right, bottom.
 const TARGET_AREA: (i32, i32, i32, i32) = (51, 37, 232, 123);
-/// Fastest box movement per tick, in pixels.
+/// Fastest box movement per step, in pixels, and steps per tick. The
+/// original's glide loop ran about as fast as the Mac could redraw; at two
+/// steps a tick (60 a second) the box keeps up with the cursor as it did, so
+/// the random "seeking" blips, which only sound while it trails behind, stay
+/// rare and the lock-on blips stand out.
 const MAX_SPEED: f32 = 20.0;
+const STEPS_PER_TICK: usize = 2;
 /// Lock-on distance from the scan point: horizontal, vertical.
 const LOCK: (i32, i32) = (20, 14);
 /// Auto scan: how close a click must be to the point.
@@ -211,9 +216,11 @@ impl Manual {
             return events;
         }
 
-        for (pos, target, step) in [(&mut self.pos.0, self.target.0, self.step.0), (&mut self.pos.1, self.target.1, self.step.1)] {
-            let target = target as f32;
-            *pos = if (*pos - target).abs() > step.abs() { *pos + step } else { target };
+        for _ in 0..STEPS_PER_TICK {
+            for (pos, target, step) in [(&mut self.pos.0, self.target.0, self.step.0), (&mut self.pos.1, self.target.1, self.step.1)] {
+                let target = target as f32;
+                *pos = if (*pos - target).abs() > step.abs() { *pos + step } else { target };
+            }
         }
         self.since_flash += TICK;
         if self.lock == 0 && self.since_flash > FLASH_GAP {
@@ -301,6 +308,33 @@ mod tests {
         }
         assert!(events.contains(&ScanEvent::Enhance(POINT)));
         assert!(events.iter().filter(|e| **e == ScanEvent::Blip).count() >= LOCK_CYCLES as usize - 1);
+    }
+
+    /// Drag the box from `from` to `to`, `step` pixels a tick; the blips heard.
+    fn blips(from: (i32, i32), to: (i32, i32), step: i32) -> usize {
+        let mut rng = Rng::new(3);
+        let mut s = Scan::manual(Some(POINT));
+        s.press(from.0, from.1);
+        for _ in 0..30 {
+            s.tick(&mut rng);
+        }
+        let n = ((to.0 - from.0).abs().max((to.1 - from.1).abs()) / step).max(1);
+        let mut count = 0;
+        for i in 0..=n {
+            s.drag(from.0 + (to.0 - from.0) * i / n, from.1 + (to.1 - from.1) * i / n);
+            count += s.tick(&mut rng).iter().filter(|e| **e == ScanEvent::Blip).count();
+        }
+        count
+    }
+
+    #[test]
+    fn blips_only_over_the_point() {
+        // Quick drags past the point's column and row keep the box with the
+        // cursor: no seeking blips.
+        assert_eq!(blips((162, 40), (162, 120), 30), 0);
+        assert_eq!(blips((60, 110), (230, 110), 30), 0);
+        // Slowly across the point: the lock-on blips.
+        assert!(blips((60, 60), (230, 60), 2) >= 2);
     }
 
     #[test]

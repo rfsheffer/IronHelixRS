@@ -246,7 +246,8 @@ Toggled in probe controls. Pressing Scan:
 
 With auto scan off, pressing Scan shows a scan box in the view. Clicking/dragging makes the box
 glide toward the mouse (max speed 20 px/step) inside the target area (x 51-232, y 37-123), with
-random flashes and blips while moving. When the box is within 20 px (h) / 14 px (v) of the point
+random flashes and blips while moving (only while it trails the cursor; the original's loop ran
+fast enough that it seldom did, so this program moves it 60 steps a second). When the box is within 20 px (h) / 14 px (v) of the point
 it locks on; after 4 blip cycles it **enhances**. Moving away cancels the lock.
 
 ### 6.4 Enhance and acquire ✅
