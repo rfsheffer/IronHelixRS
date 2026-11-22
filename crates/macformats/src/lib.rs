@@ -6,12 +6,14 @@
 //! - [`rsrc`]: resource forks
 //! - [`ndif`]: DiskCopy 6 (NDIF) disk images, including ADC compression
 //! - [`hfs`]: the HFS file system inside the disk image
+//! - [`icon`]: Finder color icons
 //!
 //! Everything is big-endian, as on the 68k Macs these came from.
 
 pub mod adc;
 pub mod arsenic;
 pub mod hfs;
+pub mod icon;
 pub mod macroman;
 pub mod ndif;
 pub mod rsrc;

@@ -330,6 +330,11 @@ impl GameScreen {
         self.game_over && !self.playing()
     }
 
+    /// Paused or showing the quit dialog: the game is waiting on the player.
+    pub fn holding(&self) -> bool {
+        self.paused || self.quit_dialog.is_some()
+    }
+
     /// The player quit (from the quit dialog).
     pub fn quitting(&self) -> bool {
         self.quitting

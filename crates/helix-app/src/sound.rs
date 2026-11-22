@@ -167,10 +167,10 @@ impl Sounds {
         if !self.loaded.contains_key(name) {
             // The installed files' names differ in case from the scripts'
             // ("60 min" for "60 Min").
-            let installed = std::fs::read_dir(&self.folder)
-                .ok()
-                .and_then(|dir| dir.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name)))
-                .and_then(|e| std::fs::read(e.path()).ok())
+            let installed = helixdb::vfs::list(&self.folder)
+                .into_iter()
+                .find(|n| n.eq_ignore_ascii_case(name))
+                .and_then(|n| helixdb::vfs::read(&self.folder.join(n)).ok())
                 .and_then(|a| aiff_to_wav(&a));
             // Director matches member names without case ("Menu Sound").
             let cast = self.cast.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, wav)| wav.clone());

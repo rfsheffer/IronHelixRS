@@ -37,14 +37,34 @@ pub struct Paths {
     pub sega_cue: Option<PathBuf>,
     /// Files extracted from the Sega CD, for its extended ending (optional).
     pub sega_files: Option<PathBuf>,
+    /// The Sega CD theme already as a WAV (from a data folder), in place of
+    /// reading the disc image.
+    pub sega_theme: Option<PathBuf>,
+    /// The installed game's folder (holding `Misc Files`).
+    pub mac_installed: Option<PathBuf>,
     /// Where the game is saved.
     pub save_file: PathBuf,
     /// Start playing at once, without the opening and title screen.
     pub skip_title: bool,
 }
 
+/// The game data folder: `--data <dir>`, else `IronHelixData` next to the
+/// program, else in the current folder.
+fn data_folder(args: &[String]) -> Option<PathBuf> {
+    use helixdb::datapack::{FOLDER, is_data_folder};
+    if let Some(dir) = args.windows(2).find(|p| p[0] == "--data").map(|p| PathBuf::from(&p[1])) {
+        return Some(dir);
+    }
+    let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(FOLDER)));
+    [beside, Some(PathBuf::from(FOLDER))].into_iter().flatten().find(|d| is_data_folder(d))
+}
+
 /// The save file's usual place: the user's application data folder.
 fn default_save_file() -> PathBuf {
+    #[cfg(target_os = "android")]
+    if let Some(dir) = crate::android::files_dir() {
+        return dir.join("save.txt");
+    }
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {
@@ -58,6 +78,11 @@ fn default_save_file() -> PathBuf {
 }
 
 impl Paths {
+    /// The game data folder (`--data <dir>`, else `IronHelixData` next to the
+    /// program or in the current folder) supplies every path; without one
+    /// the defaults are the extraction steps' `out/` folders and the
+    /// discs in `../Reference`. The flags below override either.
+    ///
     /// `--mac-app <file>`, `--mac-files <folder>`, `--mac-sounds <folder>`,
     /// `--pc-files <folder>`, `--side-panel <png>`, `--screenshot <png>`,
     /// `--skill <1-5>`, `--seed <n>`, `--sega-cue <cue>`, `--sega-files <folder>`,
@@ -75,10 +100,22 @@ impl Paths {
             seed: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64),
             sega_cue: Some(PathBuf::from("../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue")).filter(|p| p.is_file()),
             sega_files: Some(PathBuf::from("out/sega/files")).filter(|p| p.is_dir()),
+            sega_theme: None,
+            mac_installed: None,
             save_file: default_save_file(),
             skip_title: false,
         };
         let args: Vec<String> = std::env::args().collect();
+        if let Some(data) = data_folder(&args) {
+            use helixdb::datapack as d;
+            p.mac_app = data.join(d::MAC_PROGRAM);
+            p.mac_files = data.join(d::MAC_FILES);
+            p.mac_installed = Some(data.join(d::MAC_INSTALLED));
+            p.pc_files = d::part(&data, d::PC);
+            p.sega_cue = None;
+            p.sega_theme = d::part(&data, d::SEGA_THEME);
+            p.sega_files = d::part(&data, d::SEGA);
+        }
         let mut sounds = None;
         for pair in args.windows(2) {
             match pair[0].as_str() {
@@ -99,9 +136,10 @@ impl Paths {
         // Autoplay starts in the game, unless `--title` asks for the title.
         let has = |flag: &str| args.iter().any(|a| a == flag);
         p.skip_title = has("--skip-title") || (has("--autoplay") && !has("--title"));
-        p.mac_sounds = sounds.unwrap_or_else(|| {
-            p.mac_app.parent().map(|d| d.join("Iron Helix Sounds")).unwrap_or_default()
-        });
+        if p.mac_installed.is_none() {
+            p.mac_installed = p.mac_app.parent().map(Path::to_path_buf);
+        }
+        p.mac_sounds = sounds.unwrap_or_else(|| p.mac_installed.clone().unwrap_or_default().join("Iron Helix Sounds"));
         p
     }
 }
@@ -131,7 +169,7 @@ pub struct GameAssets {
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))
+    helixdb::vfs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))
 }
 
 /// Palette indices to RGBA (fully opaque).
@@ -165,10 +203,10 @@ impl GameAssets {
         }
         let cast = Rc::new(Cast::load(&movie, &paco::Palette::mac_system())?);
         let files = GameFiles::new(&paths.mac_files, paths.pc_files.as_deref())
-            .with_installed(paths.mac_app.parent().map(Path::to_path_buf).unwrap_or_default());
+            .with_installed(paths.mac_installed.clone().unwrap_or_default());
         Ok(Self {
-            theme: load_theme(paths.sega_cue.as_deref(), &files),
-            ending: paths.sega_files.as_ref().map(|f| f.join("SEGUES").join("ENDING.SEG")).filter(|p| p.is_file()),
+            theme: load_theme(paths.sega_theme.as_deref(), paths.sega_cue.as_deref(), &files),
+            ending: paths.sega_files.as_ref().map(|f| f.join("SEGUES").join("ENDING.SEG")).filter(|p| helixdb::vfs::is_file(p)),
             cast,
             save_file: paths.save_file.clone(),
             skip_title: paths.skip_title,
@@ -199,7 +237,10 @@ impl GameAssets {
 
 /// The theme music: the Sega CD's audio track 2 (44.1 kHz stereo), else the
 /// Mac CD's `Opening:Iron Helix™ Tune` (§14.4).
-fn load_theme(sega_cue: Option<&Path>, files: &GameFiles) -> Option<Vec<u8>> {
+fn load_theme(sega_theme: Option<&Path>, sega_cue: Option<&Path>, files: &GameFiles) -> Option<Vec<u8>> {
+    if let Some(wav) = sega_theme.and_then(|p| helixdb::vfs::read(p).ok()) {
+        return Some(wav);
+    }
     if let Some(cue) = sega_cue {
         match cdimage::cue::audio_track(cue, 2) {
             Ok(pcm) => return Some(crate::sound::wav(2, 16, cdimage::cue::CD_AUDIO_RATE, &pcm)),
@@ -207,5 +248,5 @@ fn load_theme(sega_cue: Option<&Path>, files: &GameFiles) -> Option<Vec<u8>> {
         }
     }
     let tune = files.find("Opening", "Iron Helix™ Tune")?;
-    crate::sound::aiff_to_wav(&fs::read(tune).ok()?)
+    crate::sound::aiff_to_wav(&helixdb::vfs::read(&tune).ok()?)
 }

@@ -26,7 +26,7 @@ crates/cdimage       library: ISO9660 on raw (2352-byte) or cooked (2048-byte) C
 crates/segafilm      library: Sega FILM container, "Cinepak for Sega" video, Sega CD PCM audio
 crates/director      library: Director 3 movies in resource forks (cast, text members, score scripts, labels)
 crates/helixdb       library: the game's data tables (navigation graph, defender, deaths, computers)
-crates/helix-tools   command line tools (`paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
+crates/helix-tools   command line tools (`pack`, `paco`, `macx`, `isox`, `sfilm`, `tomp4`, `xref`, `helixdb`)
 crates/helix-core    the game rules, no graphics or audio
 crates/helix-app     the game itself (`ironhelix`), built on macroquad for desktop and mobile
 ../Reference         original game files (not in the repo)
@@ -35,38 +35,51 @@ out/                 generated output (gitignored)
 
 ## What you need
 
-The game runs on files from your own copies of the original releases. Only the **Mac release** is
-required; the PC and Sega CD releases each add something if you have them. The paths below are
-where the game looks by default (relative to this folder); each can be changed on the command
-line.
+This repository holds only the tools. You build a playable game from **your own copies** of the
+original releases, and the package you make is yours to put on your own devices; none of the
+game's files are part of the repository. Only the **Mac release** is required; the PC and Sega CD
+releases each add something if you have them.
 
-| Release | Files you start with | What the game reads | Without it |
+| Release | What to give `pack data` | What it adds | Without it |
 |---|---|---|---|
-| **Mac** (required) | `../Reference/Game/Mac/Iron-Helix_Mac_EN.sit`, a StuffIt archive holding the CD image `Iron Helix™ CD.img` | From the CD: the `Iron Helix™ Files` folder (movies), at `out/mac/files/Iron Helix™ Files` (`--mac-files`). From `Iron Helix™ Installer` on the CD: the game program's resource fork `Iron Helix™.rsrc` (its scripts, tables, artwork and sounds), at `out/mac/app/Iron Helix™/Iron Helix™.rsrc` (`--mac-app`), with the installed `Iron Helix Sounds` and `Misc Files` folders beside it | The game won't start |
-| **PC** (optional) | The `HELIX` folder from the PC CD, copied as is to `../Reference/Game/Windows/HELIX` | `HELIX.EXE` (the hidden rooms' node data), the movies in `NAV`, `SEGUES` and so on, and the credits tune `OPENING/CREDTUNE.WAV` (`--pc-files`) | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09); quitting shows the Mac's silent credit pages instead of the PC's scrolling credits with their tune |
-| **Sega CD** (optional) | The disc image `../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue` with its `.img` | The theme from the image's audio track 2, straight from the `.cue`/`.img` (`--sega-cue`); the extended ending `SEGUES/ENDING.SEG` from the files extracted to `out/sega/files` (`--sega-files`) | The Mac's tune on the title screen; no extended ending after a skill-5 win |
+| **Mac** (required) | `--mac`: the `Iron-Helix_Mac_EN.sit` archive holding the CD image (it uses the unpacked `Iron Helix™ CD.img` beside it when there, else unpacks it, which is slower), the `.img` itself (with the `.sit` beside it, or its resource fork as a `.rsrc` file, since the image's chunk map is in its resource fork), a raw HFS image of the CD, or a folder holding the CD's `Iron Helix™ Files` folder and `Iron Helix™ Installer` | The whole game: the movies, and from the installer the game program (its scripts, tables, artwork and sounds), its sounds and its `Misc Files` | The game won't start |
+| **PC** (optional) | `--pc`: the PC CD's `HELIX` folder (or the CD) | `HELIX.EXE` (the hidden rooms' node data), the movies the Mac lacks (the hidden rooms), and the scrolling credits with their tune | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09); quitting shows the Mac's silent credit pages |
+| **Sega CD** (optional) | `--sega`: the disc image's `.cue` sheet (with its `.img`) | The theme music from audio track 2 and the extended ending `SEGUES/ENDING.SEG` | The Mac's tune on the title screen; no extended ending after a skill-5 win |
 
-Setting up, in order (the Sega step is only for the extended ending; the theme needs no setup):
+### Making the game
 
 ```
-cargo build --release
+# 1. Gather the game's files from your discs into one folder, IronHelixData (about 580 MB)
+cargo run --release -p helix-tools --bin pack -- data --mac ../Reference/Game/Mac/Iron-Helix_Mac_EN.sit --pc ../Reference/Game/Windows/HELIX --sega "../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue"
 
-# Mac: recover the disc image's resource fork (which Windows drops), open the image, extract
-# the CD, then unpack the installed game from its installer
-target/release/macx sit-extract ../Reference/Game/Mac/Iron-Helix_Mac_EN.sit -o out/mac --rsrc-only
-target/release/macx ndif "../Reference/Game/Mac/Iron Helix™ CD.img" --rsrc "out/mac/Iron Helix™ CD.img.rsrc" -o out/mac/helix.hfs
-target/release/macx hfs-extract out/mac/helix.hfs -o out/mac/files
-target/release/macx sit-extract "out/mac/files/Iron Helix™ Installer" -o out/mac/app
-
-# Sega CD (optional): extract the disc's files
-target/release/isox extract "../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).img" -o out/sega/files
-
-# Play
+# 2a. Play it from here
 cargo run --release -p helix-app
+
+# 2b. Or make the Windows package: dist/IronHelix with IronHelix.exe, the data and a readme
+cargo run --release -p helix-tools --bin pack -- windows
+
+# 2c. Or make the Android app: dist/IronHelix.apk with the data inside (about 585 MB);
+#     --install also installs it on a phone connected with USB debugging
+cargo run --release -p helix-tools --bin pack -- android --install
 ```
 
-The PC folder needs no extracting. Everything extracted stays in `out/`, which is never
-committed. The sections further down explain each tool.
+**For Android** you also need the Android SDK (with an NDK, build tools and a platform, all from
+Android Studio's SDK manager; set `ANDROID_HOME` or pass `--sdk`), a JDK (`javac` and `java` on
+the `PATH` or in `JAVA_HOME`), and Rust's Android target: `rustup target add aarch64-linux-android`
+(phones and tablets from the last decade). `pack android` uses the SDK's own tools directly (the
+NDK's clang, `d8`, `aapt`, `zipalign`, `apksigner`) with miniquad's activity, and signs the app with
+Android's debug key (`~/.android/debug.keystore`, made if missing), so it installs on your own
+devices without a store. The app runs in landscape, full screen; tap where you'd click, and the
+Back button opens the quit dialog. Its saves stay in the app's own storage.
+
+The game looks for `IronHelixData` beside its program, then in the current folder (or wherever
+`--data <dir>` says); on Android it reads the copy packed inside the app. The Windows package is a folder you can copy anywhere and run; its program
+carries the Mac release's probe icon, taken from your copy as it's built. The data folder's
+layout is described in `crates/helixdb/src/datapack.rs`.
+
+Without a data folder, the game reads the extraction steps' output in `out/` and the discs in
+`../Reference` (the defaults below), which is handy while working on the code; each path has its
+own flag. The sections further down explain the extraction tools themselves.
 
 ## Running the game: `ironhelix`
 
@@ -90,12 +103,12 @@ Cancel or Save and quit), Save, Pause and Notes (the codes the video messages ha
 the view). See [docs/design.md](docs/design.md).
 
 ```
-cargo run --release -p helix-app -- [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
+cargo run --release -p helix-app -- [--data <IronHelixData>] [--mac-app <Iron Helix™.rsrc>] [--mac-files <Iron Helix™ Files>]
     [--pc-files <HELIX>] [--sega-cue <cue>] [--sega-files <folder>] [--save <file>]
     [--skill 1-5] [--seed N] [--skip-title]
 ```
 
-Defaults are the paths in [What you need](#what-you-need) (sounds come from the
+Defaults are the data folder (see [What you need](#what-you-need)), else the `out/` folders (sounds come from the
 `Iron Helix Sounds` folder next to the game program; override with `--mac-sounds`). The window
 takes the Mac release's icon, the probe, from the game program's resource fork.
 

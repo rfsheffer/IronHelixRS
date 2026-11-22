@@ -28,7 +28,7 @@ pub struct Ending {
 
 impl Ending {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let data = std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+        let data = helixdb::vfs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
         let film = Film::parse(&data).map_err(|e| format!("{}: {e}", path.display()))?;
         let frames = film
             .samples

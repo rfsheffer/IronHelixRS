@@ -61,6 +61,13 @@ fn parse(cue: &str) -> (Option<String>, Vec<Track>) {
     (file, tracks)
 }
 
+/// The disc image a cue sheet names (its first `FILE`), beside the sheet.
+pub fn image_file(cue_path: &Path) -> Result<std::path::PathBuf> {
+    let (file, _) = parse(&std::fs::read_to_string(cue_path)?);
+    let file = file.ok_or_else(|| CdError::Invalid("cue sheet names no file".into()))?;
+    Ok(cue_path.parent().unwrap_or(Path::new(".")).join(file))
+}
+
 /// Read audio track `number` of a cue sheet's image: 16-bit little-endian
 /// stereo samples at 44.1 kHz.
 pub fn audio_track(cue_path: &Path, number: u32) -> Result<Vec<u8>> {

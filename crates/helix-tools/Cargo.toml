@@ -33,6 +33,10 @@ path = "src/bin/xref.rs"
 name = "helixdb"
 path = "src/bin/helixdb.rs"
 
+[[bin]]
+name = "pack"
+path = "src/bin/pack.rs"
+
 [dependencies]
 helixdb.workspace = true
 helix-core.workspace = true

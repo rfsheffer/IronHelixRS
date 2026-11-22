@@ -13,12 +13,14 @@
 //! - [`table`]: the line-preserving parser underneath them all
 
 pub mod computer;
+pub mod datapack;
 pub mod death;
 pub mod defender;
 pub mod files;
 pub mod nav;
 pub mod pc;
 pub mod table;
+pub mod vfs;
 
 use director::Movie;
 use thiserror::Error;

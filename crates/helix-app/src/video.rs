@@ -15,7 +15,7 @@ pub struct Clip {
 }
 
 fn parse(path: &Path) -> Result<paco::Movie, String> {
-    let data = std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+    let data = helixdb::vfs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
     paco::Movie::parse(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 

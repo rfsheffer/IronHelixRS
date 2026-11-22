@@ -9,35 +9,23 @@ use std::path::Path;
 use macroquad::miniquad::conf::Icon;
 
 /// The custom icon's resource ID (Finder's `kCustomIconResource`).
-const CUSTOM_ICON: i16 = -16455;
+pub const CUSTOM_ICON: i16 = -16455;
+
+/// The Mac's 8-bit system palette as RGB by index.
+pub fn mac_palette() -> [[u8; 3]; 256] {
+    let palette = paco::Palette::mac_system();
+    std::array::from_fn(|i| [palette.0[i].r, palette.0[i].g, palette.0[i].b])
+}
 
 /// The probe icon from the game program's resource fork, at 16, 32 and 64
 /// pixels (the 64 is the 32 doubled; the Mac has no larger one).
 pub fn mac_icon(rsrc: &Path) -> Option<Icon> {
-    let fork = std::fs::read(rsrc).ok()?;
-    let resources = macformats::rsrc::parse(&fork).ok()?;
-    let get = |kind: &[u8; 4]| resources.iter().find(|r| &r.kind == kind && r.id == CUSTOM_ICON).map(|r| r.data.as_slice());
-    // 8-bit pixels, and a 1-bit image followed by its 1-bit mask.
-    let (large, large_mask) = (get(b"icl8")?, get(b"ICN#")?.get(128..256)?);
-    let (small, small_mask) = (get(b"ics8")?, get(b"ics#")?.get(32..64)?);
-    let palette = paco::Palette::mac_system();
-    let rgba = |pixels: &[u8], mask: &[u8], size: usize, scale: usize, out: &mut [u8]| {
-        let row_bytes = size / 8;
-        let out_size = size * scale;
-        for y in 0..out_size {
-            for x in 0..out_size {
-                let (sx, sy) = (x / scale, y / scale);
-                let opaque = mask.get(sy * row_bytes + sx / 8).is_some_and(|b| b >> (7 - sx % 8) & 1 == 1);
-                let c = palette.0[pixels.get(sy * size + sx).copied().unwrap_or(0) as usize];
-                let o = (y * out_size + x) * 4;
-                out[o..o + 4].copy_from_slice(&[c.r, c.g, c.b, if opaque { 255 } else { 0 }]);
-            }
-        }
-    };
+    let resources = macformats::rsrc::parse(&std::fs::read(rsrc).ok()?).ok()?;
+    let (large, small) = macformats::icon::family(&resources, CUSTOM_ICON, &mac_palette())?;
     let mut icon = Icon { small: [0; 16 * 16 * 4], medium: [0; 32 * 32 * 4], big: [0; 64 * 64 * 4] };
-    rgba(small, small_mask, 16, 1, &mut icon.small);
-    rgba(large, large_mask, 32, 1, &mut icon.medium);
-    rgba(large, large_mask, 32, 2, &mut icon.big);
+    icon.small.copy_from_slice(&small.rgba);
+    icon.medium.copy_from_slice(&large.rgba);
+    icon.big.copy_from_slice(&large.scaled(2).rgba);
     Some(icon)
 }
 

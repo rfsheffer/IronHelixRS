@@ -11,7 +11,7 @@
 //! `L` (`2.1.1.L.D` is `2_1_1LD`).
 
 use std::collections::HashMap;
-use std::fs;
+use crate::vfs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default)]
@@ -34,16 +34,17 @@ impl GameFiles {
     /// `HELIX` folder, if the player has it.
     pub fn new(mac: impl Into<PathBuf>, pc: Option<&Path>) -> Self {
         let mut pc_nav: HashMap<u8, HashMap<String, PathBuf>> = HashMap::new();
-        let folders = pc.and_then(|pc| fs::read_dir(pc.join("NAV")).ok()).into_iter().flatten().flatten();
-        for folder in folders {
-            let name = folder.file_name().to_string_lossy().to_ascii_uppercase();
+        let nav = pc.map(|pc| pc.join("NAV"));
+        let folders = nav.iter().flat_map(|nav| vfs::list(nav).into_iter().map(move |n| (nav.join(&n), n)));
+        for (folder, name) in folders {
+            let name = name.to_ascii_uppercase();
             // L<deck><part>: the movies of one deck are split over folders A-E.
             let Some(deck) = name.strip_prefix('L').and_then(|r| r.chars().next()).and_then(|c| c.to_digit(10)) else {
                 continue;
             };
             let movies = pc_nav.entry(deck as u8).or_default();
-            for file in fs::read_dir(folder.path()).into_iter().flatten().flatten() {
-                movies.insert(key(&file.file_name().to_string_lossy()), file.path());
+            for file in vfs::list(&folder) {
+                movies.insert(key(&file), folder.join(&file));
             }
         }
         Self { mac: mac.into(), installed: None, pc: pc.map(Path::to_path_buf), pc_nav }
@@ -89,20 +90,21 @@ impl GameFiles {
 /// `root/folder/name`, matching each part without case if needed.
 fn find_in(root: &Path, folder: &str, name: &str) -> Option<PathBuf> {
     let exact = folder.split('/').fold(root.to_path_buf(), |p, part| p.join(part)).join(name);
-    if exact.is_file() {
+    if vfs::is_file(&exact) {
         return Some(exact);
     }
     let mut path = root.to_path_buf();
     for part in folder.split('/').chain(std::iter::once(name)) {
-        let entry = fs::read_dir(&path).ok()?.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))?;
-        path = entry.path();
+        let entry = vfs::list(&path).into_iter().find(|e| e.eq_ignore_ascii_case(part))?;
+        path = path.join(entry);
     }
-    path.is_file().then_some(path)
+    vfs::is_file(&path).then_some(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn pc_names() {

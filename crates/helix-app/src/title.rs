@@ -155,7 +155,7 @@ impl TitleScreen {
         let pc = assets.files.pc_file("SEGUES", "CREDITS").and_then(|p| Stream::load(&p).ok());
         let movie = match pc {
             Some(movie) => {
-                if let Some(wav) = assets.files.pc_file("OPENING", "CREDTUNE.WAV").and_then(|p| std::fs::read(p).ok()) {
+                if let Some(wav) = assets.files.pc_file("OPENING", "CREDTUNE.WAV").and_then(|p| helixdb::vfs::read(&p).ok()) {
                     self.sounds.loop_wav("CREDTUNE.WAV", &wav).await;
                 }
                 Some(movie)
@@ -171,6 +171,11 @@ impl TitleScreen {
             Some(card) => self.stage = Stage::About(card),
             None => self.sounds.play_over("SysBeeb").await,
         }
+    }
+
+    /// A movie is playing (the opening, the credits), not a still screen.
+    pub fn playing_movie(&self) -> bool {
+        matches!(self.stage, Stage::Title(_) | Stage::Opening(_) | Stage::Credits(_))
     }
 
     pub fn take_choice(&mut self) -> Option<Choice> {
