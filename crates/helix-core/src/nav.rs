@@ -281,8 +281,10 @@ impl Navigator {
     pub fn redraw(&self) -> Vec<Effect> {
         let node = if self.node().is_elevator() { "0".to_string() } else { self.node().id.clone() };
         let folder = Self::folder(node.chars().next().unwrap_or('0'));
+        // The turn into this facing ends on its view: show that, not the turn
+        // (the original played the turn when loading a game).
         vec![
-            Effect::video(folder, format!("{node}.R{}", self.facing.left()), None),
+            Effect::Still { folder: folder.to_string(), name: format!("{node}.R{}", self.facing.left()) },
             self.info_clip(),
         ]
     }

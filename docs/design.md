@@ -581,7 +581,7 @@ Probe number, defender node, probe node, facing, phase, trapped flag; volume, en
 played, warning-interval state, skill; defender return time, defender tasks, task time,
 defender-off flag; DNA kit; probe line and defender line; clue list; clues available; door
 sensors and the codes; notes text. Loading restores these and replays a turn video to redraw the
-view. The new engine can use its own format.
+view. (The new engine shows that turn's last frame at once instead of playing it.) The new engine can use its own format.
 
 The new engine saves one slot as `key=value` text (`helix-core` `Game::save`/`load`, header
 `Iron Helix save 1`): skill, probe, node line, facing, phase, energy, seconds played, next

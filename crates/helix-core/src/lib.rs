@@ -32,6 +32,9 @@ pub enum Effect {
     /// sound's name) with it. `folder` is relative to the game's files
     /// (`Navigation/L1`).
     Video { folder: String, name: String, sound: Option<String> },
+    /// Show a movie's last frame in the view at once, without playing it
+    /// (the view when a game starts or loads).
+    Still { folder: String, name: String },
     /// Play a short clip in the info strip (location labels, messages).
     InfoClip { folder: String, name: String },
     /// Play an installed sound.

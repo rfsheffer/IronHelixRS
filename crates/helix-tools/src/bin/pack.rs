@@ -843,6 +843,17 @@ fn main_activity(src: &str) -> String {
                                 bars.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
                             }",
     );
+    // The volume buttons work: they're left to Android (which miniquad's
+    // key handler would otherwise swallow) and set the media volume.
+    let src = src.replacen(
+        "public boolean onKey(View v, int keyCode, KeyEvent event) {",
+        "public boolean onKey(View v, int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_MUTE) {
+            return false;
+        }",
+        1,
+    );
+    let src = src.replacen("//% MAIN_ACTIVITY_ON_CREATE", "setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);", 1);
     // The game keeps the screen on while it plays (android::keep_screen_on).
     src.replacen(
         "//% MAIN_ACTIVITY_BODY",

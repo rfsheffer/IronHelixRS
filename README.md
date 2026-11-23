@@ -139,7 +139,8 @@ and turn, U/D ladders, Tab repeat moves (double arrows), Enter door, 1-6 elevato
 the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not in the original,
 S scan, X arm, C probe controls, M map mode, Enter on the keypad. Space or the Jam button jams
 the defender; N shows the notes; P pauses; Esc brings up the quit dialog (Q quit, S save and
-quit, Esc cancel). Drag the knob on the bottom bar (title screen or game) to set the volume. The notes use the default font here; the original draws them in 9-point
+quit, Esc cancel). When a computer asks for a code and the screen is wider than the game, a large copy
+of its keypad (with the code typed so far) appears to the right of it, easy to tap on a phone. Drag the knob on the bottom bar (title screen or game) to set the volume. The notes use the default font here; the original draws them in 9-point
 Geneva. F pixel-perfect scaling, H debug overlay. In the manual, drag or use the wheel, arrows and
 Page Up/Down to scroll, pinch or Ctrl+wheel (or + and -) to zoom, and Esc, Back or the close
 button to return. On the title screen: M manual, 1-5 skill, Enter begin,

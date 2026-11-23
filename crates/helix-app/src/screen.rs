@@ -210,6 +210,9 @@ pub struct GameScreen {
     slider: crate::volume::Slider,
     /// The knob was let go: the sound check plays.
     sound_check: bool,
+    /// Time warnings waiting for the movie playing to finish (one would
+    /// cut its sound off).
+    held_warnings: Vec<String>,
     sounds: Sounds,
     pub status: String,
     /// Paused (Lingo's PauseGame): any key or click carries on.
@@ -306,6 +309,7 @@ impl GameScreen {
             dragging: false,
             slider: Default::default(),
             sound_check: false,
+            held_warnings: Vec::new(),
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             status: String::new(),
             paused: false,
@@ -641,16 +645,19 @@ impl GameScreen {
         // The computer screen.
         if self.game.interface() == Interface::Computer {
             if let Some(b) = self.game.computer_button_at(x as i32, y as i32) {
-                self.hilite = self.computer_hilite(b).map(|c| (c, HILITE_TIME));
-                self.panel_still = None;
-                self.act(Action::Computer(b), None);
+                self.press_computer(b);
             }
             return true;
         }
         // Scan and probe-control buttons on the control screen.
         if let Some(b) = self.game.button_at(x as i32, y as i32) {
+            let before = self.game.interface();
             self.hilite = self.hilite_cast(b).map(|c| ((c, loc(&self.frame, CH_SCREEN)), HILITE_TIME));
             self.act(Action::Press(b), None);
+            // A button that closes its screen (Exit) goes with it.
+            if self.game.interface() != before {
+                self.hilite = None;
+            }
             return true;
         }
         // Door and elevator panels on the control screen.
@@ -695,6 +702,35 @@ impl GameScreen {
         }
         if std::mem::take(&mut self.dragging) {
             self.act(Action::ViewRelease, None);
+        }
+    }
+
+    /// A computer button pressed: lit while pressed, unless it closes the
+    /// computer.
+    fn press_computer(&mut self, b: ComputerButton) {
+        self.hilite = self.computer_hilite(b).map(|c| (c, HILITE_TIME));
+        self.panel_still = None;
+        self.act(Action::Computer(b), None);
+        if self.game.interface() != Interface::Computer {
+            self.hilite = None;
+        }
+    }
+
+    /// A computer's keypad is asking for a code.
+    pub fn keypad_up(&self) -> bool {
+        !self.paused && self.quit_dialog.is_none() && self.game.computer_view().is_some_and(|v| v.digits.is_some())
+    }
+
+    /// The code entered on the keypad so far.
+    pub fn keypad_code(&self) -> String {
+        self.game.computer_view().and_then(|v| v.digits).unwrap_or_default()
+    }
+
+    /// A key on the keypad (from the keyboard, or the big keypad beside
+    /// the game on wide screens).
+    pub fn keypad(&mut self, button: ComputerButton) {
+        if self.keypad_up() && !self.busy() {
+            self.press_computer(button);
         }
     }
 
@@ -777,11 +813,7 @@ impl GameScreen {
                     Enter | KpEnter => ComputerButton::Enter,
                     _ => return,
                 };
-                if !self.busy() {
-                    self.hilite = self.computer_hilite(button).map(|c| (c, HILITE_TIME));
-                    self.panel_still = None;
-                    self.act(Action::Computer(button), None);
-                }
+                self.keypad(button);
             }
             // Testing aids for autoplay: click the scan point (or, with the
             // arm out, the port), press Acquire.
@@ -858,12 +890,15 @@ impl GameScreen {
             return;
         }
         // The 90-minute clock runs in real time, through movies too.
-        if !self.game_over {
+        if !self.game_over && !self.game.won() {
             let (now, later) = split_sounds(self.game.pass_time(dt));
-            for s in now {
+            self.held_warnings.extend(now);
+            self.queue.extend(later);
+        }
+        if !self.held_warnings.is_empty() && !self.playing() {
+            for s in std::mem::take(&mut self.held_warnings) {
                 self.sounds.play(&s).await;
             }
-            self.queue.extend(later);
         }
         // The marker moves to a new deck at once and slides once a move's
         // movie is over.
@@ -989,6 +1024,14 @@ impl GameScreen {
                         Err(e) => self.status = e,
                     }
                 }
+                Effect::Still { folder, name } => match Clip::load(&assets.file(&folder, &name)) {
+                    Ok(clip) => {
+                        let last = clip.frames.last().map(|(f, _)| (f.clone(), clip.width));
+                        self.view_still = last.clone();
+                        self.nav_still = last;
+                    }
+                    Err(e) => self.status = e,
+                },
                 Effect::InfoClip { folder, name } => {
                     if let Ok(clip) = crate::patches::info_clip(assets, &folder, &name) {
                         self.start_audio(&clip).await;
@@ -1124,6 +1167,7 @@ impl GameScreen {
         }
         let scan = self.game.scan_view();
         if self.view.is_none()
+            && !self.entering
             && let Some((look, at)) = scan.scan_box
         {
             let offset = match look {
@@ -1134,7 +1178,8 @@ impl GameScreen {
             };
             self.draw_cast(canvas, CAST_SCAN_BOX + offset, at, true);
         }
-        if let Some((cast, at)) = self.game.arm_view() {
+        // (Not on the death, entering and win screens, whose view is blank.)
+        if let Some((cast, at)) = self.game.arm_view().filter(|_| !self.entering) {
             self.draw_cast(canvas, cast, at, true);
         }
 
@@ -1151,6 +1196,7 @@ impl GameScreen {
         }
         crate::volume::Slider::draw(&self.cast, canvas);
         if self.view.is_none()
+            && !self.entering
             && let Some((frame, at)) = scan.marker
         {
             let cast = if frame >= 6 { CAST_SCAN_HIT } else { CAST_SCAN_MARKER + frame as u16 };

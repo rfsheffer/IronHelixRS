@@ -21,6 +21,7 @@ mod assets;
 mod android;
 mod ending;
 mod icon;
+mod keypad;
 mod layout;
 mod manual;
 mod patches;
@@ -374,6 +375,8 @@ pub async fn main() {
     let mut pause = 0.0f32;
     // Whether the screen is being kept on (Android).
     let mut kept_awake = false;
+    // The big keypad beside the game, while a computer asks for a code.
+    let mut big_keypad = keypad::Keypad::default();
 
     loop {
         if is_key_pressed(KeyCode::F) {
@@ -472,6 +475,13 @@ pub async fn main() {
             Mode::Game(game) => {
                 if is_key_pressed(KeyCode::Back) {
                     game.key(KeyCode::Escape);
+                }
+                // A tap on the big keypad (outside the stage).
+                if game.keypad_up() && is_mouse_button_pressed(MouseButton::Left) {
+                    let (x, y) = mouse_position();
+                    if let Some(button) = big_keypad.press(&layout, x, y) {
+                        game.keypad(button);
+                    }
                 }
                 for key in GAME_KEYS {
                     if is_key_pressed(key) {
@@ -591,6 +601,9 @@ pub async fn main() {
         }
 
         if let Mode::Game(game) = &mode {
+            if game.keypad_up() {
+                big_keypad.draw(&layout, &game.keypad_code());
+            }
             // The notes, over the view (9-point green text in the original).
             if let Some(lines) = game.notes() {
                 draw_notes(&layout, &lines);
