@@ -22,6 +22,7 @@ mod android;
 mod ending;
 mod icon;
 mod layout;
+mod manual;
 mod patches;
 mod screen;
 mod sound;
@@ -77,7 +78,7 @@ const GAME_KEYS: [KeyCode; 31] = [
 ];
 
 /// Keys the title screen takes.
-const TITLE_KEYS: [KeyCode; 14] = [
+const TITLE_KEYS: [KeyCode; 15] = [
     KeyCode::Key1,
     KeyCode::Key2,
     KeyCode::Key3,
@@ -92,6 +93,7 @@ const TITLE_KEYS: [KeyCode; 14] = [
     KeyCode::Q,
     KeyCode::Escape,
     KeyCode::Space,
+    KeyCode::M,
 ];
 
 fn window_conf() -> Conf {
@@ -278,6 +280,8 @@ enum Mode {
     Title,
     Game(Box<GameScreen>),
     Ending(Box<Ending>),
+    /// The manual, opened from the title (which waits underneath).
+    Manual(Box<manual::Manual>),
 }
 
 /// A press, drag or release at stage coordinates.
@@ -451,6 +455,11 @@ pub async fn main() {
                             }
                         }
                     }
+                    Some(Choice::Manual) => {
+                        if let Some(m) = assets.manual.as_deref().and_then(manual::Manual::open) {
+                            next = Some(Mode::Manual(Box::new(m)));
+                        }
+                    }
                     Some(Choice::Quit) => {
                         #[cfg(target_os = "android")]
                         android::close();
@@ -524,6 +533,11 @@ pub async fn main() {
                 }
                 ending.draw(&mut canvas);
             }
+            Mode::Manual(m) => {
+                if !m.update(dt) {
+                    next = Some(Mode::Title);
+                }
+            }
         }
         if let Some(m) = next {
             mode = m;
@@ -535,6 +549,7 @@ pub async fn main() {
             Mode::Title => title.playing_movie(),
             Mode::Game(game) => !game.holding(),
             Mode::Ending(_) => true,
+            Mode::Manual(_) => false,
         };
         if awake != kept_awake {
             kept_awake = awake;
@@ -564,6 +579,16 @@ pub async fn main() {
             WHITE,
             DrawTextureParams { dest_size: Some(vec2(layout.stage.w, layout.stage.h)), ..Default::default() },
         );
+        match &mode {
+            Mode::Title => {
+                if let Some(lit) = title.manual_button() {
+                    draw_manual_button(&layout, lit);
+                }
+            }
+            // The manual covers the whole window.
+            Mode::Manual(m) => m.draw(),
+            _ => {}
+        }
 
         if let Mode::Game(game) = &mode {
             // The notes, over the view (9-point green text in the original).
@@ -597,6 +622,27 @@ pub async fn main() {
 
         next_frame().await;
     }
+}
+
+/// The title menu's Manual button (not in the original), in the menu's
+/// look: a dark plate with an indicator, lit green while pressed, and the
+/// label in the menu's light gray.
+fn draw_manual_button(l: &Layout, lit: bool) {
+    let (x, y, w, h) = title::MANUAL_BUTTON;
+    let s = l.scale;
+    let (x, y, w, h) = (l.stage.x + x * s, l.stage.y + y * s, w * s, h * s);
+    draw_rectangle(x, y, w, h, Color::from_rgba(28, 30, 32, 230));
+    draw_rectangle_lines(x, y, w, h, s.max(1.0), Color::from_rgba(120, 124, 128, 255));
+    // The indicator, like the menu's.
+    let (lw, lh) = (h * 0.9, h * 0.42);
+    let (lx, ly) = (x + h * 0.3, y + (h - lh) / 2.0);
+    let led = if lit { Color::from_rgba(80, 230, 80, 255) } else { Color::from_rgba(20, 22, 24, 255) };
+    draw_rectangle(lx, ly, lw, lh, led);
+    draw_rectangle_lines(lx, ly, lw, lh, (s * 0.6).max(1.0), Color::from_rgba(90, 94, 98, 255));
+    let size = h * 0.72;
+    let m = measure_text("MANUAL", None, size as u16, 1.0);
+    let tx = lx + lw + (x + w - (lx + lw) - m.width) / 2.0;
+    draw_text("MANUAL", tx, y + (h + m.height) / 2.0, size, Color::from_rgba(214, 214, 210, 255));
 }
 
 /// The debug overlay (H): the game's state and the keys.

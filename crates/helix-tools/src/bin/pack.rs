@@ -18,6 +18,10 @@
 //!   rooms and the scrolling credits.
 //! - `--sega`: the Sega CD image's `.cue` sheet, for the theme music and the
 //!   extended ending.
+//! - `--manual`: a scan of the printed manual as a PDF (one image per page,
+//!   like the `Manual.pdf` that comes with copies of the PC release), for the
+//!   game's manual viewer. Without it, a `Manual.pdf` in or beside the `--pc`
+//!   folder is used.
 //!
 //! `pack windows` builds the game and puts it in a folder with the data,
 //! ready to copy anywhere. `pack android` builds an APK with the data inside,
@@ -57,6 +61,10 @@ enum Command {
         /// The Sega CD image's .cue sheet (optional).
         #[arg(long)]
         sega: Option<PathBuf>,
+        /// The manual as a scanned PDF (optional; else a Manual.pdf in or
+        /// beside the --pc folder).
+        #[arg(long)]
+        manual: Option<PathBuf>,
         #[arg(short, long, default_value = dp::FOLDER)]
         out: PathBuf,
     },
@@ -84,13 +92,13 @@ enum Command {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Data { mac, pc, sega, out } => data(&mac, pc.as_deref(), sega.as_deref(), &out),
+        Command::Data { mac, pc, sega, manual, out } => data(&mac, pc.as_deref(), sega.as_deref(), manual.as_deref(), &out),
         Command::Windows { data, out } => windows(&data, &out),
         Command::Android { data, out, sdk, install } => android(&data, &out, sdk.as_deref(), install),
     }
 }
 
-fn data(mac_in: &Path, pc_in: Option<&Path>, sega_in: Option<&Path>, out: &Path) -> Result<()> {
+fn data(mac_in: &Path, pc_in: Option<&Path>, sega_in: Option<&Path>, manual_in: Option<&Path>, out: &Path) -> Result<()> {
     if out.exists() {
         if !dp::is_data_folder(out) && fs::read_dir(out)?.next().is_some() {
             bail!("{} exists and isn't a data folder; choose another --out", out.display());
@@ -114,6 +122,19 @@ fn data(mac_in: &Path, pc_in: Option<&Path>, sega_in: Option<&Path>, out: &Path)
         println!("Sega CD: {}", cue.display());
         sega(cue, out)?;
         manifest.push(format!("sega: {}", file_name(cue)));
+    }
+    // The manual: given, or a Manual.pdf in or beside the PC folder.
+    let manual_in = manual_in.map(Path::to_path_buf).or_else(|| {
+        let pc = pc_in?;
+        [Some(pc), pc.parent()].into_iter().flatten().find_map(|dir| find_ci(dir, "Manual.pdf"))
+    });
+    if let Some(pdf) = manual_in {
+        println!("Manual: {}", pdf.display());
+        match manual(&pdf, out) {
+            Ok(n) => manifest.push(format!("manual: {} ({n} pages)", file_name(&pdf))),
+            // Optional: a PDF that isn't a scan is skipped.
+            Err(e) => println!("  skipped: {e:#}"),
+        }
     }
     let _ = fs::remove_dir_all(&work);
     fs::write(out.join(dp::MANIFEST), manifest.join("\n") + "\n")?;
@@ -381,6 +402,22 @@ fn pc(input: &Path, out: &Path) -> Result<usize> {
     }
     println!("  {count} files (the hidden rooms, the credits and HELIX.EXE)");
     Ok(count)
+}
+
+// --- Manual --------------------------------------------------------------
+
+/// The manual's pages, each a JPEG taken out of the scanned PDF as it is,
+/// as `manual/01.jpg` and on.
+fn manual(pdf: &Path, out: &Path) -> Result<usize> {
+    let data = fs::read(pdf)?;
+    let pages = helix_tools::pdf::Pdf::parse(&data)?.page_jpegs().context("this PDF isn't a scan with one image per page")?;
+    let dir = out.join(dp::MANUAL);
+    fs::create_dir_all(&dir)?;
+    for (i, jpeg) in pages.iter().enumerate() {
+        fs::write(dir.join(format!("{:02}.jpg", i + 1)), jpeg)?;
+    }
+    println!("  {} pages", pages.len());
+    Ok(pages.len())
 }
 
 // --- Sega CD -------------------------------------------------------------

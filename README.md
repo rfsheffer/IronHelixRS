@@ -45,6 +45,7 @@ releases each add something if you have them.
 | **Mac** (required) | `--mac`: the `Iron-Helix_Mac_EN.sit` archive holding the CD image (it uses the unpacked `Iron Helix™ CD.img` beside it when there, else unpacks it, which is slower), the `.img` itself (with the `.sit` beside it, or its resource fork as a `.rsrc` file, since the image's chunk map is in its resource fork), a raw HFS image of the CD, or a folder holding the CD's `Iron Helix™ Files` folder and `Iron Helix™ Installer` | The whole game: the movies, and from the installer the game program (its scripts, tables, artwork and sounds), its sounds and its `Misc Files` | The game won't start |
 | **PC** (optional) | `--pc`: the PC CD's `HELIX` folder (or the CD) | `HELIX.EXE` (the hidden rooms' node data), the movies the Mac lacks (the hidden rooms), and the scrolling credits with their tune | No hidden rooms (2.42/2.43 and the stasis room 4.08/4.09); quitting shows the Mac's silent credit pages |
 | **Sega CD** (optional) | `--sega`: the disc image's `.cue` sheet (with its `.img`) | The theme music from audio track 2 and the extended ending `SEGUES/ENDING.SEG` | The Mac's tune on the title screen; no extended ending after a skill-5 win |
+| **Manual** (optional) | `--manual`: a scan of the printed manual as a PDF with one image per page, like the `Manual.pdf` that comes with copies of the PC release (one in or beside the `--pc` folder is found without the option) | The manual, to read in the game: a **Manual** button on the title menu (or M) | No Manual button |
 
 ### Making the game
 
@@ -139,7 +140,9 @@ the elevator door), 0-9 and Backspace (cancel) on the computer keypad; and, not 
 S scan, X arm, C probe controls, M map mode, Enter on the keypad. Space or the Jam button jams
 the defender; N shows the notes; P pauses; Esc brings up the quit dialog (Q quit, S save and
 quit, Esc cancel). Drag the knob on the bottom bar (title screen or game) to set the volume. The notes use the default font here; the original draws them in 9-point
-Geneva. F pixel-perfect scaling, H debug overlay. On the title screen: 1-5 skill, Enter begin,
+Geneva. F pixel-perfect scaling, H debug overlay. In the manual, drag or use the wheel, arrows and
+Page Up/Down to scroll, pinch or Ctrl+wheel (or + and -) to zoom, and Esc, Back or the close
+button to return. On the title screen: M manual, 1-5 skill, Enter begin,
 Esc quit; a click or key skips the opening movies. `--skill` picks the title's starting skill,
 `--skip-title` goes straight into a game. Computer codes show in a small built-in font; the
 original draws them with Mac text.

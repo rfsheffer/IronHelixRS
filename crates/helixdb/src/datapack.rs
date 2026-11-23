@@ -13,6 +13,7 @@
 //!   pc/OPENING/CREDTUNE.WAV      tune (all optional)
 //!   sega/theme.wav               the Sega CD's theme, from its audio track
 //!   sega/SEGUES/ENDING.SEG       the Sega CD's extended ending (optional)
+//!   manual/01.jpg ...            the printed manual's pages, from a scan (optional)
 //! ```
 //!
 //! The PC and Sega CD parts keep those discs' own folder names, so the game
@@ -33,6 +34,8 @@ pub const MAC_INSTALLED: &str = "mac";
 pub const PC: &str = "pc";
 pub const SEGA: &str = "sega";
 pub const SEGA_THEME: &str = "sega/theme.wav";
+/// The manual's pages: `01.jpg`, `02.jpg` and on.
+pub const MANUAL: &str = "manual";
 
 /// Whether `dir` is a data folder (it has the manifest and the program).
 pub fn is_data_folder(dir: &Path) -> bool {

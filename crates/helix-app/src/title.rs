@@ -33,6 +33,11 @@ const CH_LOAD: usize = 16;
 const CH_REPLAY: usize = 17;
 const CH_QUIT: usize = 18;
 const CH_ABOUT: usize = 19;
+/// The Manual button (not in the original), standing in for a channel.
+const CH_MANUAL: usize = 99;
+/// Where the Manual button sits on the stage: x, y, width, height (bottom
+/// left, below the bridge's console).
+pub const MANUAL_BUTTON: (f32, f32, f32, f32) = (10.0, 354.0, 92.0, 22.0);
 /// Where the opening plays on the bridge (score frame `BridgeBG`).
 const OPENING_AT: (i32, i32) = (177, 66);
 /// About and the credits (320x240): centered in the area the score's
@@ -51,6 +56,8 @@ const PRESS_TIME: f32 = 0.25;
 pub enum Choice {
     Begin(u8),
     Load(String),
+    /// Read the manual (the title waits underneath).
+    Manual,
     Quit,
 }
 
@@ -85,6 +92,8 @@ pub struct TitleScreen {
     slider: crate::volume::Slider,
     /// The knob was let go: the sound check plays.
     sound_check: bool,
+    /// There's a manual to read (the Manual button shows).
+    has_manual: bool,
 }
 
 impl TitleScreen {
@@ -103,6 +112,7 @@ impl TitleScreen {
             sounds: Sounds::new(assets.mac_sounds.clone(), assets.cast_sounds.clone()),
             choice: None,
             back_to_menu: false,
+            has_manual: assets.manual.is_some(),
             slider: Default::default(),
             sound_check: false,
         })
@@ -178,6 +188,12 @@ impl TitleScreen {
         matches!(self.stage, Stage::Title(_) | Stage::Opening(_) | Stage::Credits(_))
     }
 
+    /// The Manual button, when the menu is up and there's a manual: whether
+    /// it's lit (pressed).
+    pub fn manual_button(&self) -> Option<bool> {
+        (self.has_manual && matches!(self.stage, Stage::Menu)).then(|| self.pressed.is_some_and(|(b, _)| b == CH_MANUAL))
+    }
+
     pub fn take_choice(&mut self) -> Option<Choice> {
         let choice = self.choice.take();
         if choice.is_none() && matches!(self.stage, Stage::Done) {
@@ -204,6 +220,8 @@ impl TitleScreen {
                     self.skill = level as u8 + 1;
                 } else if let Some(button) = (CH_BEGIN..=CH_ABOUT).find(|&ch| self.sprite_hit(ch, x, y)) {
                     self.pressed = Some((button, PRESS_TIME));
+                } else if self.has_manual && in_rect(MANUAL_BUTTON, x, y) {
+                    self.pressed = Some((CH_MANUAL, PRESS_TIME));
                 }
             }
             _ => self.skip(),
@@ -252,6 +270,7 @@ impl TitleScreen {
             KeyCode::R => CH_REPLAY,
             KeyCode::A => CH_ABOUT,
             KeyCode::Escape | KeyCode::Q => CH_QUIT,
+            KeyCode::M if self.has_manual => CH_MANUAL,
             _ => return,
         };
         self.pressed = Some((button, PRESS_TIME));
@@ -301,6 +320,7 @@ impl TitleScreen {
 
     async fn act(&mut self, assets: &GameAssets, button: usize) {
         match button {
+            CH_MANUAL => self.choice = Some(Choice::Manual),
             CH_BEGIN => {
                 self.sounds.stop();
                 self.choice = Some(Choice::Begin(self.skill));
@@ -382,4 +402,8 @@ impl TitleScreen {
             Stage::Done => {}
         }
     }
+}
+
+fn in_rect((rx, ry, rw, rh): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
+    x >= rx && y >= ry && x < rx + rw && y < ry + rh
 }

@@ -530,6 +530,14 @@ when the PC files are missing. A click or key closes About, skips the opening mo
 once during the credits. The title's movies decode as they play (`paco::Stream`): whole, the
 opening credits alone would take about 200 MB.
 
+**Manual (new).** When the data folder has the manual's pages (`pack data --manual`, from a
+scanned PDF with one JPEG per page; the PC copies' `Manual.pdf` is 36 grayscale pages of 810x1254),
+the title menu gets a **Manual** button at the bottom left (stage 10,354, 92x22; or M). It opens
+the pages in a full-window viewer: one after another down the screen, dragged or flung, the wheel,
+arrows and Page Up/Down to scroll, pinch, Ctrl+wheel or +/- to zoom, Esc/Back or the close button
+to leave. Pages are decoded on a background thread as they come near the screen and dropped when
+far away. The title's music plays on.
+
 ### 12.2 New game ✅
 
 Generate codes and pick the clue list (§8.3-8.4); empty DNA kit; auto scan on; phase 1; notes

@@ -17,4 +17,5 @@ paco.workspace = true
 macformats.workspace = true
 cdimage.workspace = true
 segafilm.workspace = true
+jpeg-decoder = { version = "0.3", default-features = false }
 macroquad = { version = "0.4", features = ["audio"] }

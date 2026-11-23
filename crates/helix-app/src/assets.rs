@@ -40,6 +40,8 @@ pub struct Paths {
     /// The Sega CD theme already as a WAV (from a data folder), in place of
     /// reading the disc image.
     pub sega_theme: Option<PathBuf>,
+    /// The manual's pages (from a data folder), for the manual viewer.
+    pub manual: Option<PathBuf>,
     /// The installed game's folder (holding `Misc Files`).
     pub mac_installed: Option<PathBuf>,
     /// Where the game is saved.
@@ -101,6 +103,7 @@ impl Paths {
             sega_cue: Some(PathBuf::from("../Reference/Game/SegaCD/Iron Helix (US)/Iron Helix (US).cue")).filter(|p| p.is_file()),
             sega_files: Some(PathBuf::from("out/sega/files")).filter(|p| p.is_dir()),
             sega_theme: None,
+            manual: None,
             mac_installed: None,
             save_file: default_save_file(),
             skip_title: false,
@@ -115,6 +118,7 @@ impl Paths {
             p.sega_cue = None;
             p.sega_theme = d::part(&data, d::SEGA_THEME);
             p.sega_files = d::part(&data, d::SEGA);
+            p.manual = d::part(&data, d::MANUAL);
         }
         let mut sounds = None;
         for pair in args.windows(2) {
@@ -164,6 +168,8 @@ pub struct GameAssets {
     pub theme: Option<Vec<u8>>,
     /// The Sega CD's extended ending movie, if its files are given.
     pub ending: Option<PathBuf>,
+    /// The manual's pages, if the data folder has them.
+    pub manual: Option<PathBuf>,
     pub save_file: PathBuf,
     pub skip_title: bool,
 }
@@ -209,6 +215,7 @@ impl GameAssets {
             ending: paths.sega_files.as_ref().map(|f| f.join("SEGUES").join("ENDING.SEG")).filter(|p| helixdb::vfs::is_file(p)),
             cast,
             save_file: paths.save_file.clone(),
+            manual: paths.manual.clone(),
             skip_title: paths.skip_title,
             movie,
             data,
